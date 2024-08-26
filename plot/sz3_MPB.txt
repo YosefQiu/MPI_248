@@ -1,0 +1,9 @@
+1E-1: MSE: 85.14, PSNR: 28.83 dB, Bitrate: 1.36 bits/pixel
+1E-2: MSE: 82.24, PSNR: 28.98 dB, Bitrate: 3.93 bits/pixel
+1E-3: MSE: 87.59, PSNR: 28.71 dB, Bitrate: 8.58 bits/pixel
+1E-4: MSE: 83.24, PSNR: 28.93 dB, Bitrate: 16.96 bits/pixel
+1E-5: MSE: 54.16, PSNR: 30.79 dB, Bitrate: 27.94 bits/pixel
+1E-6: MSE: 14.20, PSNR: 36.61 dB, Bitrate: 36.32 bits/pixel
+1E-7: MSE: 1.52, PSNR: 46.30 dB, Bitrate: 46.93 bits/pixel
+1E-8: MSE: 0.27, PSNR: 53.80 dB, Bitrate: 40.45 bits/pixel
+1E-9: MSE: 0.10, PSNR: 58.26 dB, Bitrate: 33.91 bits/pixel

@@ -1,0 +1,74 @@
+cmake_minimum_required(VERSION 3.10)
+project(CUDA_MPI LANGUAGES CXX CUDA)
+
+# 设置 CUDA 的架构，这里假设你使用的是 8.0 架构，可以根据需要修改
+set(CMAKE_CUDA_ARCHITECTURES 80)
+
+# 设置编译选项
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CUDA_STANDARD 17)
+
+# 设置 include 目录
+include_directories(${PROJECT_SOURCE_DIR}/include)
+
+# 查找所有的 .cpp 和 .cu 文件
+file(GLOB_RECURSE CPP_SOURCES ${PROJECT_SOURCE_DIR}/src/*.cpp)
+file(GLOB_RECURSE CUDA_SOURCES ${PROJECT_SOURCE_DIR}/src/*.cu)
+file(GLOB_RECURSE HEADER_FILES 
+    include/*.h
+    include/*.hpp
+    include/*.cuh)
+
+file(GLOB_RECURSE RESOURCE_FILES
+    res/data/*.raw)
+
+# Add Common
+file(GLOB Common_HEADER_FILES Common/*.h)
+file(GLOB Common_GL_HEADER_FILES Common/GL/*.h)
+file(GLOB Common_UtilNPP_HEADER_FILES Common/UtilNPP/*.h)
+include_directories(Common)
+
+# Add cusz szx
+include_directories("~/third_bin/include/szx")
+include_directories("~/third_bin/include/cusz")
+link_directories("~/third_lib")
+
+
+# 设置 MPI 编译器
+find_package(MPI REQUIRED)
+include_directories(${MPI_INCLUDE_PATH})
+
+
+source_group("Headers" FILES ${HEADER_FILES})
+source_group("Sources" FILES ${CPP_SOURCES})
+source_group("CUDAKernel" FILES ${CUDA_SOURCES})
+source_group("Common" FILES ${Common_HEADER_FILES})
+source_group("Common\\GL" FILES ${Common_GL_HEADER_FILES})
+source_group("Common\\UtilNPP" FILES ${Common_UtilNPP_HEADER_FILES})
+source_group("Resources" FILES ${RESOURCE_FILES})
+
+
+# 添加可执行文件
+add_executable(${PROJECT_NAME} 
+    ${HEADER_FILES} 
+    ${CPP_SOURCES} 
+    ${CUDA_SOURCES}
+    ${Common_HEADER_FILES}
+    ${Common_GL_HEADER_FILES} 
+    ${Common_UtilNPP_HEADER_FILES}
+	${RESOURCE_FILES})
+
+# 查找并链接 CUSZ 和 SZX 库
+find_library(CUSZ_LIB cusz HINTS "~/third_lib")
+find_library(SZX_LIB SZx HINTS "~/third_lib")
+
+
+# 链接 CUDA 和 MPI 库
+target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES} cuda stdc++ ${CUSZ_LIB} ${SZX_LIB})
+
+# 设置 CUDA 的编译选项
+set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# 指定 MPI 编译器
+set(CMAKE_C_COMPILER /opt/cray/pe/craype/2.7.30/bin/cc)
+set(CMAKE_CXX_COMPILER /opt/cray/pe/craype/2.7.30/bin/cc)

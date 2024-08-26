@@ -1,0 +1,9 @@
+1E-1: MSE: 0.00, PSNR: inf dB, Bitrate: 12.55 bits/pixel
+1E-2: MSE: 0.00, PSNR: inf dB, Bitrate: 13.69 bits/pixel
+1E-3: MSE: 0.00, PSNR: inf dB, Bitrate: 24.14 bits/pixel
+1E-4: MSE: 0.00, PSNR: inf dB, Bitrate: 27.14 bits/pixel
+1E-5: MSE: 0.00, PSNR: inf dB, Bitrate: 27.87 bits/pixel
+1E-6: MSE: 0.00, PSNR: inf dB, Bitrate: 27.81 bits/pixel
+1E-7: MSE: 0.00, PSNR: inf dB, Bitrate: 27.80 bits/pixel
+1E-8: MSE: 0.00, PSNR: inf dB, Bitrate: 27.80 bits/pixel
+1E-9: MSE: 0.00, PSNR: inf dB, Bitrate: 27.80 bits/pixel
