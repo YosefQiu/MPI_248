@@ -20,15 +20,14 @@ def find_max_diff_pixel(image1, image2):
     return max_diff, max_diff_index
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python calculate_mse_psnr.py <filename1> <filename2>")
+    if len(sys.argv) != 5:
+        print("Usage: python calculate_mse_psnr.py <filename1> <filename2> <width> <height>")
         sys.exit(1)
 
     filename1 = sys.argv[1]
     filename2 = sys.argv[2]
-
-    width = 512
-    height = 512
+    width = int(sys.argv[3])
+    height = int(sys.argv[4])
     channels = 4  # RGBA
 
     # 加载二进制文件
