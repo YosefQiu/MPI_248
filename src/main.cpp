@@ -223,9 +223,51 @@ int main(int argc, char* argv[])
 		std::cout << "[ERROR]:: NO Finished " << outputFilename << " [ " << image_width << " X " << image_height << " ]" << std::endl;
 
 	p->binarySwap_Alpha(h_alpha);
+	float global_error_bounded = 1E-2;
+	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
+	int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
+	float* error_array = new float[range_w * range_h];
+	if (p->Processor_Size == 2 || p->Processor_Size == 4)
+	{
+		for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
+		{
+			for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
+			{
+				auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
+				auto tmp_error = global_error_bounded / (1 + p_alpha);
+				error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
+			}
+		}
+	
+		// 找到error_array中的最大值
+		float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
+		float max_error = *max_error_ptr;
+		std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
+	}
+
 	p->binarySwap_RGB(h_rgb);
 	//p->binarySwap(h_output);
 
+	// std::cout << "[Processor::binarySwap_RGB]:: PID " << p->Processor_ID 
+    //           << " Total Sent Bytes: " << p->totalSentBytes 
+    //           << " Total Received Bytes: " << p->totalReceivedBytes << std::endl;
+
+	size_t totalSentBytesAllProcesses = 0;
+    size_t totalReceivedBytesAllProcesses = 0;
+
+    MPI_Reduce(&p->totalSentBytes, &totalSentBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&p->totalReceivedBytes, &totalReceivedBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    // 在主进程上输出总通信量
+    if (p->Processor_ID == 0)
+    {
+        std::cout << "[Processor::binarySwap_RGB]:: Total Sent Bytes: " << totalSentBytesAllProcesses 
+                  << " Total Received Bytes: " << totalReceivedBytesAllProcesses << std::endl;
+    }
+
+
+	delete[] error_array;
+	error_array = nullptr;
 	if (p->Processor_ID == 0 && p->kdTree->depth != 0)
 	{
 		float* obr_rgba = nullptr;

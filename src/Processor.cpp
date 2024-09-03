@@ -285,7 +285,7 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 		//	}
 		//}
 		u++;
-		std::cout << "[binarySwap_Alpha]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
+		// std::cout << "[binarySwap_Alpha]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 	}
 
 	// part II final image gathering
@@ -342,7 +342,7 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
 	}
 	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
-	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
+	// std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
 	this->reset();
 }
 
@@ -357,36 +357,65 @@ void Processor::binarySwap_RGB(float* img_color)
 	int u = 0;					// 当前二叉交换的层次
 	Point2Di sa, sb;			// 要发送的子图像的起始和结束位置
 	Point2Di ra, rb;			// 要接收的子图像的起始和结束位置
+	float process_error = 0.005f;
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
 		// 填充缓冲区
 		this->loadColorBuffer(sa, sb);
-		#if __linux__
+#if _WIN32
 		size_t outSize; 
-		float errorBound = 1E-2;
+		float errorBound = process_error / kdTree->depth;
 		size_t nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 		unsigned char* bytes =  SZx_fast_compress_args(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
+		
 		std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " CALC round [ " << u 
-		<< " ] COMPRESS nbEle [ " << nbEle << "] compression size [ " << outSize 
-		<< " ] CR " << 1.0f*nbEle*sizeof(float)/outSize << " ] " << std::endl; 
+			<< " ] COMPRESS nbEle [ " << nbEle << "] compression size [ " << outSize 
+			<< " ] CR " << 1.0f*nbEle*sizeof(float)/outSize << " ] " << std::endl; 
  
-		// 测试。理论可以得到类似的结果
-		size_t byteLength = outSize;
-		float *decompressedData = (float*)SZx_fast_decompress(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, bytes, byteLength, 0, 0, 0, 0, nbEle);
-		//memcpy(rgb_sbuffer, decompressedData, nbEle * sizeof(float));
-		#endif
+		// 测试。理论可以得到类似的结果 
+		// 解压缩需要 bytes, byteLength, nbEle 要用MPI发送
+		// 先发送 byteLength 和 nbEle
+		size_t sendInfo[2] = { outSize, nbEle };
+    	size_t recvInfo[2];
+		MPI_Sendrecv(sendInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->Processor_ID,
+                 recvInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+
+
+		size_t recv_byteLength = recvInfo[0];
+		size_t recv_nbEle = recvInfo[1];
+		// 发送压缩的数据
+		unsigned char* receivedCompressedBytes = new unsigned char[recv_byteLength];
+		MPI_Sendrecv(bytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
+                 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+
+		float *decompressedData = (float*)SZx_fast_decompress(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
+		memcpy(rgb_rbuffer, decompressedData, recv_nbEle * sizeof(float));
+
+		delete[] receivedCompressedBytes;
+		delete[] bytes;
+		delete[] decompressedData;
+
+		totalSentBytes += outSize;
+        totalReceivedBytes += recv_byteLength;
+#endif
+
+#if __linux__
 		// 计算发送和接收的大小
 		int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 		int recvcount = (std::abs(ra.x - rb.x) + 1) * (std::abs(ra.y - rb.y) + 1) * 3;
 		// 发送和接收
 		MPI_Sendrecv(&rgb_sbuffer[0], sendcount, MPI_FLOAT, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
 			&rgb_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
-
+		
+		totalSentBytes += sendcount * sizeof(float);
+        totalReceivedBytes += recvcount * sizeof(float);
+#endif
+		
 		obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
 		this->compositngColor(u);
 		u++;
-		std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
+		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 	}
 
 	// part II final image gathering
@@ -451,7 +480,7 @@ void Processor::binarySwap_RGB(float* img_color)
 		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
 	}
 	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
-	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COLOR COMPOSITING " << std::endl;
+	// std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COLOR COMPOSITING " << std::endl;
 	this->reset();
 
 

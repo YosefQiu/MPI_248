@@ -44,7 +44,10 @@ public:
 	float* obr;						// 图像数组
 	float* obr_alpha;				// 图像alpha 数组
 	float* obr_rgb;					// 图像rgb数组
-	float*** alpha_values_u;
+	float*** alpha_values_u;		// 每次交换的当前的alpha 值
+
+	size_t totalSentBytes = 0;
+	size_t totalReceivedBytes = 0;
 public:
 	// camera
 	unsigned int camera_plane_x, camera_plane_y;
