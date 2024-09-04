@@ -18,7 +18,8 @@ public:
 public:
 	void initCuda(void* h_volume, cudaExtent volumeSize);
 	void freeCudaBuffers();
-	void render_kernel(dim3 gridSize, dim3 blockSize, float* d_output, uint imageW, uint imageH, 
+	void render_kernel(dim3 gridSize, dim3 blockSize, float* d_output_rgb, float* d_output_alpha, 
+		uint imageW, uint imageH, 
 		float3 camPos, float3 camLookAt, float3 cam_U, float3 cam_V, float ccam_dz,
 		float3 boxMin, float3 boxMax, float3 big_boxMin, float3 big_boxMax, float3 data_compensation,
 		float density, float brightness, float transferOffset, float transferScale,

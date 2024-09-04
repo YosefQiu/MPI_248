@@ -83,9 +83,25 @@ int main(int argc, char* argv[])
 	gridSize = dim3((image_width + blockSize.x - 1) / blockSize.x, (image_height + blockSize.y - 1) / blockSize.y);
 	p = new Processor;
 	auto rank = p->Processor_ID; auto size = p->Processor_Size;
-
+	char hostname[256];
+    gethostname(hostname, sizeof(hostname));  // 获取主机名
+	// 先获取节点上可用的 GPU 数量
+    
 	findCudaDevice(argc, (const char**)argv);
+	
 	CudaKernel cudakernel;
+	int gpu_count;
+    cudaGetDeviceCount(&gpu_count);
+
+    // 映射每个进程到特定的 GPU（在本地节点上）
+    int gpu_id = p->Processor_ID % gpu_count;
+    cudaSetDevice(gpu_id);
+
+    int device_id;
+    cudaGetDevice(&device_id);
+	std::cout << "Process " << p->Processor_ID 
+		<< " is using GPU " << device_id << " / " << gpu_count 
+		<< " on " << hostname << std::endl;
 
 	p->initScreen(image_width, image_height);
 	p->initRayCaster(p->camera_plane_x, p->camera_plane_y);
@@ -141,17 +157,44 @@ int main(int argc, char* argv[])
 	cudakernel.initCuda(d_volume, initCuda_size);
 	//cudaFree(d_volume);
 
-	float* d_output;
-	cudaMalloc((void**)&d_output, image_width * image_height * 4 * sizeof(float));
+	float* d_output_rgb;	
+	float* d_output_alpha;
+	cudaMalloc((void**)&d_output_rgb, image_width * image_height * 3 * sizeof(float));
+	cudaMalloc((void**)&d_output_alpha, image_width * image_height * 1 * sizeof(float));
 
-	cudaMemset(d_output, 0, image_width * image_height * 4 * sizeof(float));
+	cudaMemset(d_output_rgb, 0, image_width * image_height * 3 * sizeof(float));
+	cudaMemset(d_output_alpha, 0, image_width * image_height * 1 * sizeof(float));
 
+	// 记录渲染开始时间（MPI 和 CUDA）
+    double start_time = MPI_Wtime();
+    cudaEvent_t cuda_start, cuda_stop;
+    cudaEventCreate(&cuda_start);
+    cudaEventCreate(&cuda_stop);
+    cudaEventRecord(cuda_start, 0);
 	
-	cudakernel.render_kernel(gridSize, blockSize, d_output, image_width, image_height,
+	cudakernel.render_kernel(gridSize, blockSize, d_output_rgb, d_output_alpha, 
+		image_width, image_height,
 		p->camera->from, p->camera->to, p->camera->u, p->camera->v, dz,
 		boxMin, boxMax, big_boxMin, big_boxMax, compensation,
 		density, brightness, transferOffset, transferScale,
 		d_minMaxXY);
+	
+	cudaEventRecord(cuda_stop, 0);
+    cudaEventSynchronize(cuda_stop);
+    float cuda_time = 0.0f;
+    cudaEventElapsedTime(&cuda_time, cuda_start, cuda_stop);
+	// 暂停计时，准备进行数据拷贝和处理
+    double pause_time = MPI_Wtime();
+    
+	// 汇总所有进程的 CUDA 时间到主进程
+    float total_cuda_time_all_processes = 0.0f;
+    MPI_Reduce(&cuda_time, &total_cuda_time_all_processes, 1, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
+
+    if (p->Processor_ID == 0)
+    {
+        std::cout << "Total CUDA execution time (across all processes): " << total_cuda_time_all_processes << " ms" << std::endl;
+    }
+
 
 	cudaMemcpy(h_minMaxXY, d_minMaxXY, 4 * sizeof(uint), cudaMemcpyDeviceToHost);
 
@@ -166,21 +209,26 @@ int main(int argc, char* argv[])
 	getLastCudaError("Kernel failed");
 
 	// Allocate host memory for the image
-	float* h_output = new float[image_width * image_height * 4];
+	//float* h_output_rgb = new float[image_width * image_height * 4];
 
 	// Copy data back to host
-	cudaMemcpy(h_output, d_output, image_width * image_height * 4 * sizeof(float), cudaMemcpyDeviceToHost);
-	std::cout << "[CPU]:: PID [ " << p->Processor_ID << " ] copy back to host" << std::endl;
+	//cudaMemcpy(h_output, d_output, image_width * image_height * 4 * sizeof(float), cudaMemcpyDeviceToHost);
+	//std::cout << "[CPU]:: PID [ " << p->Processor_ID << " ] copy back to host" << std::endl;
 	//MPI_Barrier(MPI_COMM_WORLD);
 
-	float* h_rgb = nullptr;
-	float* h_alpha = nullptr;
-	Utils::splitRGBA(h_output, image_width, image_height, h_rgb, h_alpha);
+	float* h_rgb = new float[image_width * image_height * 3];
+	float* h_alpha = new float[image_width * image_height * 1];
+	cudaMemcpy(h_rgb, d_output_rgb, image_width * image_height * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaMemcpy(h_alpha, d_output_alpha, image_width * image_height * 1 * sizeof(float), cudaMemcpyDeviceToHost);
+	//Utils::splitRGBA(h_output, image_width, image_height, h_rgb, h_alpha);
 
-	// Convert float image to unsigned char image
+	// 将RGB和ALPHA数据合并
 	unsigned char* h_img_uc2 = new unsigned char[image_width * image_height * 4];
-	for (int i = 0; i < image_width * image_height * 4; ++i) {
-		h_img_uc2[i] = static_cast<unsigned char>(h_output[i] * 255.0f);
+	for (int i = 0; i < image_width * image_height; ++i) {
+		h_img_uc2[i * 4 + 0] = static_cast<unsigned char>(h_rgb[i * 3 + 0] * 255.0f);  // R
+		h_img_uc2[i * 4 + 1] = static_cast<unsigned char>(h_rgb[i * 3 + 1] * 255.0f);  // G
+		h_img_uc2[i * 4 + 2] = static_cast<unsigned char>(h_rgb[i * 3 + 2] * 255.0f);  // B
+		h_img_uc2[i * 4 + 3] = static_cast<unsigned char>(h_alpha[i] * 255.0f);        // A
 	}
 
 	char outputFilename[128];
@@ -189,7 +237,11 @@ int main(int argc, char* argv[])
 	{
 		sprintf(outputFilename, "ground_truth.png");
 		// 生成GT的binary
+		float* h_output = nullptr;
+		Utils::combineRGBA(h_rgb, h_alpha, image_width, image_height, h_output);
 		Utils::saveArrayAsBinary("ground_truth.bin", h_output, image_width, image_height);
+		delete[] h_output;
+		h_output = nullptr;
 	}
 	else
 	{
@@ -222,6 +274,11 @@ int main(int argc, char* argv[])
 	else
 		std::cout << "[ERROR]:: NO Finished " << outputFilename << " [ " << image_width << " X " << image_height << " ]" << std::endl;
 
+	
+	// 恢复计时，继续统计剩余时间
+    double resume_time = MPI_Wtime();
+    start_time += (resume_time - pause_time);  // 扣除暂停期间的时间
+
 	p->binarySwap_Alpha(h_alpha);
 	float global_error_bounded = 1E-2;
 	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
@@ -245,7 +302,23 @@ int main(int argc, char* argv[])
 		std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
 	}
 
-	p->binarySwap_RGB(h_rgb);
+	p->binarySwap_RGB(h_rgb, false);
+
+	// 记录最终结束时间
+    double end_time = MPI_Wtime();
+    double total_time = end_time - start_time;
+
+    // 汇总所有进程的总时间到主进程
+    double max_time;
+    MPI_Reduce(&total_time, &max_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+	// 在主进程上输出总时间
+    if (p->Processor_ID == 0)
+    {
+        std::cout << "Total execution time from render_kernel (excluding copy and split) (across all processes): " 
+		<< (max_time * 1000) << " ms." << std::endl;
+    }
+
+
 	//p->binarySwap(h_output);
 
 	// std::cout << "[Processor::binarySwap_RGB]:: PID " << p->Processor_ID 
@@ -291,15 +364,20 @@ int main(int argc, char* argv[])
 
 
 
-	delete[] h_output;
+	delete[] h_alpha;
+	delete[] h_rgb;
 
-	cudaFree(d_output);
+	cudaFree(d_output_rgb);
+	cudaFree(d_output_alpha);
 
 	
 
 	if (p->Processor_Size == 1)
 		system("pause");
 	if (p) { delete p; p = NULL; }
+
+
+	
 	err = MPI_Finalize();
 	if (err != MPI_SUCCESS)
 	{
@@ -309,3 +387,25 @@ int main(int argc, char* argv[])
 	return 0;
 }
 
+// #include <mpi.h>
+// #include <cuda_runtime.h>
+// #include <iostream>
+
+// int main(int argc, char *argv[]) {
+//     MPI_Init(&argc, &argv);
+
+//     int rank;
+//     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+//     int gpu_count;
+//     cudaGetDeviceCount(&gpu_count);
+//     std::cout << "Rank " << rank << " sees " << gpu_count << " GPU(s)" << std::endl;
+// 	int gpu_id = rank % 4; // 假设每个节点有 4 个 GPU
+// 	cudaSetDevice(gpu_id);
+
+// 	int device_id;
+// 	cudaGetDevice(&device_id);
+// 	std::cout << "Process " << rank << " is bound to GPU " << device_id << std::endl;
+//     MPI_Finalize();
+//     return 0;
+// }

@@ -90,7 +90,7 @@ public:
 	void initOpti();
 	void binarySwap(float* img);
 	void binarySwap_Alpha(float* img);
-	void binarySwap_RGB(float* img);
+	void binarySwap_RGB(float* img, bool bUseCompression = true);
 public:
 	void setRatioUV();
 	void setCamera();

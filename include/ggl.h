@@ -51,6 +51,7 @@
 // SZX
 #include "szx.h"
 #include "szx_rw.h"
+#include <unistd.h>
 
 extern struct timeval startTime;
 extern struct timeval endTime;  /* Start and end times */

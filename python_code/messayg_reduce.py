@@ -1,3 +1,5 @@
+import sys
+
 def calculate_reduction(original_bytes, compressed_bytes):
     """
     计算通信量减少的百分比。
@@ -10,23 +12,36 @@ def calculate_reduction(original_bytes, compressed_bytes):
     reduction_percentage = (reduction / original_bytes) * 100
     return reduction, reduction_percentage
 
+def process_file(file_path):
+    """
+    处理输入的TXT文件，计算每行压缩前后的减少百分比，并将结果追加到文件中。
+    
+    :param file_path: 输入文件的路径
+    """
+    lines = []
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+
+    with open(file_path, 'w') as file:
+        for line in lines:
+            data = line.strip().split()
+            if len(data) == 2:
+                compressed_bytes = int(data[0])
+                original_bytes = int(data[1])
+                
+                _, reduction_percentage = calculate_reduction(original_bytes, compressed_bytes)
+                
+                # 在行末添加减少的百分比
+                new_line = f"{line.strip()} {reduction_percentage:.2f}%\n"
+                file.write(new_line)
+            else:
+                file.write(line)  # 如果行格式不正确，保持原样
+
 if __name__ == "__main__":
-    # 示例数据，单位为字节
-    original_total_sent_bytes = 9437184   # 不使用有损压缩时的发送总量
-    compressed_total_sent_bytes = 1032921  # 使用有损压缩时的发送总量
+    if len(sys.argv) != 2:
+        print("Usage: python script.py <file_path>")
+        sys.exit(1)
 
-    original_total_received_bytes = 9437184   # 不使用有损压缩时的接收总量
-    compressed_total_received_bytes = 1032921  # 使用有损压缩时的接收总量
-
-    # 计算发送和接收的减少量及百分比
-    sent_reduction, sent_reduction_percentage = calculate_reduction(
-        original_total_sent_bytes, compressed_total_sent_bytes
-    )
-
-    received_reduction, received_reduction_percentage = calculate_reduction(
-        original_total_received_bytes, compressed_total_received_bytes
-    )
-
-    # 输出结果
-    print(f"Sent bytes reduced by: {sent_reduction} bytes ({sent_reduction_percentage:.2f}%)")
-    print(f"Received bytes reduced by: {received_reduction} bytes ({received_reduction_percentage:.2f}%)")
+    file_path = sys.argv[1]
+    process_file(file_path)
+    print(f"Processed file: {file_path}")

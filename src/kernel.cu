@@ -101,7 +101,8 @@ __device__ float3 fmaf_float3(float3 a, float b, float3 c) {
 }
 
 
-__global__ void d_render(float* d_output, uint imageW, uint imageH,
+__global__ void d_render(float* d_output_rgb, float* d_output_alpha,
+    uint imageW, uint imageH,
     float3 ccamPos, float3 ccamLookAt, float3 ccam_U, float3 ccam_V, float ccam_dz,
     float density, float brightness, float transferOffset, float transferScale, 
     float3 bboxMin, float3 bboxMax, float3 big_bboxMin, float3 big_bboxMax, float3 data_compensation,
@@ -244,10 +245,10 @@ __global__ void d_render(float* d_output, uint imageW, uint imageH,
     sum *= brightness;
 
 
-    d_output[idx * 4 + 0] = sum.x;  // R
-    d_output[idx * 4 + 1] = sum.y;  // G
-    d_output[idx * 4 + 2] = sum.z;  // B
-    d_output[idx * 4 + 3] = sum.w;  // A
+    d_output_rgb[idx * 3 + 0] = sum.x;  // R
+    d_output_rgb[idx * 3 + 1] = sum.y;  // G
+    d_output_rgb[idx * 3 + 2] = sum.z;  // B
+    d_output_alpha[idx] = sum.w;  // A
 
     // Store min and max positions if pixel intersects AABB
     atomicMin(&d_minMaxXY[0], x);
@@ -361,13 +362,15 @@ void CudaKernel::freeCudaBuffers()
     checkCudaErrors(cudaFreeArray(d_transferFuncArray));
 }
 
-void CudaKernel::render_kernel(dim3 gridSize, dim3 blockSize, float* d_output, uint imageW, uint imageH,
+void CudaKernel::render_kernel(dim3 gridSize, dim3 blockSize, float* d_output_rgb, float* d_output_alpha, 
+    uint imageW, uint imageH,
     float3 camPos, float3 camLookAt, float3 cam_U, float3 cam_V, float ccam_dz,
     float3 boxMin, float3 boxMax, float3 big_boxMin, float3 big_boxMax, float3 data_compensation,
     float density, float brightness, float transferOffset, float transferScale,
     uint* d_minMaxXY)
 {
-    d_render << <gridSize, blockSize >> > (d_output, imageW, imageH,
+    d_render << <gridSize, blockSize >> > (d_output_rgb, d_output_alpha,
+        imageW, imageH,
         camPos, camLookAt, cam_U, cam_V, ccam_dz,
         density, brightness, transferOffset, transferScale,
         boxMin, boxMax, big_boxMin, big_boxMax, data_compensation,
