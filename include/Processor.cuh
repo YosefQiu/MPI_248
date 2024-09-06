@@ -29,8 +29,18 @@ public:
 	// binary swap
 	float* alpha_sbuffer;
 	float* alpha_rbuffer;
+	float* d_alpha_sbuffer;
+	float* d_alpha_rbuffer;
+
+
+	float* h_alpha_sbuffer;
+	float* h_alpha_rbuffer;
+	float h_s_len;
+	float h_r_len;
+
 	float* rgb_sbuffer;
 	float* rgb_rbuffer;
+
 	float* sbuffer;
 	float* rbuffer;
 	
@@ -40,11 +50,18 @@ public:
 	Point2Di obr_alpha_a, obr_alpha_b;
 	Point2Di obr_rgb_a, obr_rgb_b;
 	int obr_x, obr_y;				//图像尺寸
+
+	size_t tmpRecvCound;
 	
 	float* obr;						// 图像数组
 	float* obr_alpha;				// 图像alpha 数组
+	float* d_obr_alpha;				// GPU上的alpha数组
 	float* obr_rgb;					// 图像rgb数组
 	float*** alpha_values_u;		// 每次交换的当前的alpha 值
+	float* d_alpha_values_u;		// GPU上的每次交换的当前的alpha 值
+
+	size_t alpha_totalSentBytes = 0;
+	size_t alpha_totalReceivedBytes = 0;
 
 	size_t totalSentBytes = 0;
 	size_t totalReceivedBytes = 0;
@@ -78,6 +95,15 @@ public:
 
 		if (sbuffer) delete[] sbuffer; sbuffer = nullptr;
 		if (rbuffer) delete[] rbuffer; rbuffer = nullptr;
+
+		if(alpha_sbuffer) delete[] alpha_sbuffer; alpha_sbuffer = nullptr;
+		if(alpha_rbuffer) delete[] alpha_rbuffer; alpha_rbuffer = nullptr;
+
+		if(rgb_sbuffer) delete[] rgb_sbuffer; rgb_sbuffer = nullptr;
+		if(rgb_rbuffer) delete[] rgb_rbuffer; rgb_rbuffer = nullptr;
+
+		cudaFree(d_alpha_sbuffer);
+		cudaFree(d_alpha_rbuffer);
 	}
 public:
 	void init_node(float3& a, float3& b, int id);
@@ -90,7 +116,8 @@ public:
 	void initOpti();
 	void binarySwap(float* img);
 	void binarySwap_Alpha(float* img);
-	void binarySwap_RGB(float* img, bool bUseCompression = true);
+	void binarySwap_RGB(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true);
+	void binarySwap_Alpha_GPU(float* d_imgAlpha);
 public:
 	void setRatioUV();
 	void setCamera();
@@ -111,5 +138,6 @@ private:
 	void compositngColor(const int u);
 	void reset();
 	bool read_data(const std::string& s, float3& a, float3& b, cudaExtent volumeTotalSize);
+	
 };
 

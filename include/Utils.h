@@ -12,7 +12,11 @@ public:
 	static void saveImageAsPNG(const char* filename, float* data, int width, int height);
 	static void splitRGBA(float* h_output, int image_width, int image_height, float*& h_rgb, float*& h_alpha);
 	static void combineRGBA(float* h_rgb, float* h_alpha, int image_width, int image_height, float*& h_output);
+	static void convertRGBtoRRRGGGBBB(float* src_buffer, size_t buffer_len, float* dst_buffer);
+	static void convertRRRGGGBBBtoRGB(float* src_buffer, size_t buffer_len, float* dst_buffer);
 
+	static void recordCudaRenderTime(const char* filename, int size, int rank, float elapsedTime);
+	
 
 };
 

@@ -100,6 +100,13 @@ __device__ float3 fmaf_float3(float3 a, float b, float3 c) {
     return result;
 }
 
+__device__ float recursive_round(float value) {
+    // 逐步进行四舍五入，分别到千分位、万分位等
+    value = roundf(value * 100000.0f) / 100000.0f;  // 先四舍五入到第五位
+    value = roundf(value * 10000.0f) / 10000.0f;    // 再四舍五入到第四位
+    value = roundf(value * 1000.0f) / 1000.0f;      // 最后四舍五入到第三位
+    return value;
+}
 
 __global__ void d_render(float* d_output_rgb, float* d_output_alpha,
     uint imageW, uint imageH,
@@ -116,7 +123,7 @@ __global__ void d_render(float* d_output_rgb, float* d_output_alpha,
     uint y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x >= imageW || y >= imageH) return;
-    //if (!(x == 251 && y == 372)) return;
+    //if (!(x == 406 && y == 231)) return;
     
     // Camera setup
     float3 camDir = normalize(ccamLookAt - ccamPos);
@@ -180,10 +187,14 @@ __global__ void d_render(float* d_output_rgb, float* d_output_alpha,
        
         float3 texCoord;
         
-       
-        pos_temp.x = truncf( (pos.x) * 1000.0f) / 1000.0f;
-        pos_temp.y = truncf( (pos.y) * 1000.0f) / 1000.0f;
-        pos_temp.z = truncf( (pos.z) * 1000.0f) / 1000.0f;
+        pos_temp.x = recursive_round(pos.x);
+        pos_temp.y = recursive_round(pos.y);
+        pos_temp.z = recursive_round(pos.z);
+        
+
+        // pos_temp.x = truncf( (pos.x) * 1000.0f) / 1000.0f;
+        // pos_temp.y = truncf( (pos.y) * 1000.0f) / 1000.0f;
+        // pos_temp.z = truncf( (pos.z) * 1000.0f) / 1000.0f;
 
         /*pos_temp.x = truncf(roundf(pos.x * 10000.0f) / 10.0f) / 1000.0f;
         pos_temp.y = truncf(roundf(pos.y * 10000.0f) / 10.0f) / 1000.0f;
@@ -244,10 +255,15 @@ __global__ void d_render(float* d_output_rgb, float* d_output_alpha,
 
     sum *= brightness;
 
-
-    d_output_rgb[idx * 3 + 0] = sum.x;  // R
-    d_output_rgb[idx * 3 + 1] = sum.y;  // G
-    d_output_rgb[idx * 3 + 2] = sum.z;  // B
+    int numPixels = imageW * imageH;
+    // chage to rrrr... gggg... bbb
+    // d_output_rgb[idx * 3 + 0] = sum.x;  // R
+    // d_output_rgb[idx * 3 + 1] = sum.y;  // G
+    // d_output_rgb[idx * 3 + 2] = sum.z;  // B
+    int rOffset = idx; int gOffset = idx + numPixels; int bOffset = idx + 2 * numPixels;
+    d_output_rgb[rOffset] = sum.x;  // R
+    d_output_rgb[gOffset] = sum.y;  // G
+    d_output_rgb[bOffset] = sum.z;  // B
     d_output_alpha[idx] = sum.w;  // A
 
     // Store min and max positions if pixel intersects AABB

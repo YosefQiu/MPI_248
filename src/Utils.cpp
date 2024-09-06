@@ -1,4 +1,5 @@
 ﻿#include "Utils.h"
+#include "mpi.h"
 void Utils::saveArrayAsBinary(const char* filename, float* data, size_t width, size_t height)
 {
 	std::ofstream file(filename, std::ios::out | std::ios::binary);
@@ -168,4 +169,56 @@ void Utils::combineRGBA(float* h_rgb, float* h_alpha, int image_width, int image
 		h_output[i * 4 + 2] = h_rgb[i * 3 + 2]; // B
 		h_output[i * 4 + 3] = h_alpha[i];       // Alpha
 	}
+}
+
+void Utils::recordCudaRenderTime(const char* filename, int size, int rank, float elapsedTime)
+{
+	// 所有进程在写文件前等待同步
+    MPI_Barrier(MPI_COMM_WORLD);
+
+	std::ofstream outfile;
+    outfile.open(filename, std::ios_base::app);  
+
+    if (rank == 0 && outfile.tellp() == 0)
+		outfile << "进程总数  进程ID  时间(ms)" << std::endl;
+	else 
+        outfile << std::endl;
+
+	outfile << size << " " << rank << " " << elapsedTime << std::endl;
+
+    outfile.close();
+	// 确保所有进程在写完后同步
+    MPI_Barrier(MPI_COMM_WORLD);
+}
+
+void Utils::convertRGBtoRRRGGGBBB(float* src_buffer, size_t buffer_len, float* dst_buffer)
+{
+	size_t num_pixels = buffer_len / 3;
+    size_t r_index = 0;
+    size_t g_index = num_pixels;
+    size_t b_index = 2 * num_pixels;
+
+    // 遍历 src_buffer，并将数据重新分配到新的顺序中
+    for (size_t i = 0; i < num_pixels; ++i)
+    {
+        dst_buffer[r_index++] = src_buffer[3 * i + 0];     // R分量
+        dst_buffer[g_index++] = src_buffer[3 * i + 1]; // G分量
+        dst_buffer[b_index++] = src_buffer[3 * i + 2]; // B分量
+    }
+}
+
+void Utils::convertRRRGGGBBBtoRGB(float* src_buffer, size_t buffer_len, float* dst_buffer)
+{
+	size_t num_pixels = buffer_len / 3;
+    size_t r_index = 0;
+    size_t g_index = num_pixels;
+    size_t b_index = 2 * num_pixels;
+
+    // 遍历 src_buffer，并将数据恢复为 rgb rgb rgb 的顺序
+    for (size_t i = 0; i < num_pixels; ++i)
+    {
+        dst_buffer[3 * i + 0] = src_buffer[r_index++]; // R分量
+        dst_buffer[3 * i + 1] = src_buffer[g_index++]; // G分量
+        dst_buffer[3 * i + 2] = src_buffer[b_index++]; // B分量
+    }
 }
