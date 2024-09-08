@@ -462,14 +462,9 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 	int u = 0;					// 当前二叉交换的层次
 	Point2Di sa, sb;			// 要发送的子图像的起始和结束位置
 	Point2Di ra, rb;			// 要接收的子图像的起始和结束位置
-	
-	// while (kdTree->depth != 0 && u < kdTree->depth)
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
-		//std::cout << "[binarySwap_Alpha]:: PID " << Processor_ID << " Begin round [ " << u << " ] " << std::endl;
 		this->setDimensions(u, obr_alpha_a, obr_alpha_b, sa, sb, ra, rb);
-
-
 		// 填充缓冲区
 		int index = 0;
 		for (int j = sa.y; j <= sb.y; j++)
@@ -488,32 +483,16 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 		// 计算发送和接收的大小
 		int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 1;
 		int recvcount = (std::abs(ra.x - rb.x) + 1) * (std::abs(ra.y - rb.y) + 1) * 1;
-		
 		// 发送和接收
 		MPI_Sendrecv(&alpha_sbuffer[0], sendcount, MPI_FLOAT, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
-					 &alpha_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+			&alpha_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 	
-		// 更新alpha的值
-		//this->visibleFunc(u); 
-
 		obr_alpha_a = ra; obr_alpha_b = rb;//更新图像起始和结束位置
-		
-		alpha_totalSentBytes += sendcount * sizeof(float);
-		alpha_totalReceivedBytes += recvcount * sizeof(float);
-
-		// 将更新后的 Alpha 数据存储到三维数组中
-		for (int img_h = 0; img_h < obr_y; ++img_h) {
-			for (int img_w = 0; img_w < obr_x; ++img_w) {
-				alpha_values_u[u][img_h][img_w] = obr_alpha[img_h * obr_x + img_w];
-			}
-		}
+		this->visibleFunc(u); // 更新alpha的值
 		u++;
 		// std::cout << "[binarySwap_Alpha]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 	}
 
-
-
-/*
 	// part II final image gathering
 	// 计算缓冲区大小
 	int sendWidth = std::abs(obr_alpha_b.x - obr_alpha_a.x) + 1;
@@ -570,7 +549,6 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
 	// std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
 	this->reset();
-	*/
 }
 
 void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression)
@@ -603,7 +581,8 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		double start_round_time = MPI_Wtime();
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
 		// 填充缓冲区
-		this->loadColorBuffer(sa, sb);
+		// this->loadColorBuffer(sa, sb);
+		this->loadColorBufferRRGGBB(sa, sb);
 		if(bUseCompression)
 		{
 			// if (u == 0) {
@@ -670,14 +649,16 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			int recvcount = (std::abs(ra.x - rb.x) + 1) * (std::abs(ra.y - rb.y) + 1) * 3;
 			// 发送和接收
 			MPI_Sendrecv(&rgb_sbuffer[0], sendcount, MPI_FLOAT, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
-				&rgb_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+				  		 &rgb_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 			
+			tmpRecvCound = recvcount;
 			totalSentBytes += sendcount * sizeof(float);
 			totalReceivedBytes += recvcount * sizeof(float);
 		}
 		
 		obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
-		this->compositngColor(u);
+		// this->compositngColor(u);
+		this->compositngColorRRGGBB(u);
 		u++;
 		double end_round_time = MPI_Wtime();
 		each_round_time += (end_round_time - start_round_time);
@@ -688,6 +669,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		
 	}
 
+
 	// part II final image gathering
 	// 计算缓冲区大小
 	int sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
@@ -695,7 +677,14 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	int bufsize = sendWidth * sendHeight * 3;
 	bufsize += 4;
 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
+	
 
+	// R, G, B 通道在 obr_rgb 中的起始偏移量
+	int totalPixels = obr_x * obr_y;
+	int rOffset_obr = 0;                      // R 通道从 0 开始
+	int gOffset_obr = totalPixels;            // G 通道从 totalPixels 开始
+	int bOffset_obr = totalPixels * 2;        // B 通道从 2 * totalPixels 开始 
+	
 	if (Processor_ID == 0)
 	{
 		for (u = 1; u < this->Processor_Size; u++)
@@ -712,10 +701,10 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 					float g = fbuffer[index++];
 					float b = fbuffer[index++];
 
-					int pixelIndex = (j * obr_x + i) * 3;
-					obr_rgb[pixelIndex + 0] = r;
-					obr_rgb[pixelIndex + 1] = g;
-					obr_rgb[pixelIndex + 2] = b;
+					int pixelIndex = (j * obr_x + i) * 1;
+					obr_rgb[rOffset_obr + pixelIndex] = r;
+					obr_rgb[gOffset_obr + pixelIndex] = g;
+					obr_rgb[bOffset_obr + pixelIndex] = b;
 				}
 			}
 		}
@@ -728,18 +717,24 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		fbuffer[0] = obr_rgb_a.x; fbuffer[1] = obr_rgb_a.y;
 		fbuffer[2] = obr_rgb_b.x; fbuffer[3] = obr_rgb_b.y;
 
+		// R, G, B 通道在 obr_rgb 中的起始偏移量
+		int totalPixels = obr_x * obr_y;
+		int rOffset = 0;                      // R 通道从 0 开始
+		int gOffset = totalPixels;            // G 通道从 totalPixels 开始
+		int bOffset = totalPixels * 2;        // B 通道从 2 * totalPixels 开始
+
 		int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
 		for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++)
 		{
 			for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++)
 			{
 				// 计算当前像素在 obr_rgb 数组中的起始位置
-				int pixelIndex = (j * obr_x + i) * 3;
+				int pixelIndex = (j * obr_x + i) * 1;
 
 				// 从 color 数组中读取 RGB 分量
-				float r_float = obr_rgb[pixelIndex + 0];
-				float g_float = obr_rgb[pixelIndex + 1];
-				float b_float = obr_rgb[pixelIndex + 2];
+				float r_float = obr_rgb[rOffset  + pixelIndex];
+				float g_float = obr_rgb[gOffset  + pixelIndex];
+				float b_float = obr_rgb[bOffset  + pixelIndex];
 
 				// 将RGB分量存储到 fbuffer 中
 				fbuffer[index++] = r_float;
@@ -910,6 +905,43 @@ void Processor::loadColorBuffer(const Point2Di& sa, const Point2Di& sb)
 	}
 }
 
+void Processor::loadColorBufferRRGGBB(const Point2Di& sa, const Point2Di& sb)
+{
+	// R, G, B 通道在 rgb_sbuffer 中的起始位置
+	int totalPixels = (std::abs(sb.x - sa.x) + 1) * (std::abs(sb.y - sa.y) + 1);
+    int rOffset_sbuffer = 0;                      // R 通道从 0 开始
+    int gOffset_sbuffer = totalPixels;            // G 通道从 totalPixels 开始
+    int bOffset_sbuffer = totalPixels * 2;        // B 通道从 2 * totalPixels 开始
+
+	// R, G, B 通道在 obr_rgb 中的起始偏移量
+    int totalImagePixels = obr_x * obr_y;
+    int rOffset_obr = 0;                          // R 通道从 0 开始
+    int gOffset_obr = totalImagePixels;           // G 通道从 totalImagePixels 开始
+    int bOffset_obr = totalImagePixels * 2;       // B 通道从 2 * totalImagePixels 开始
+
+	int index = 0;
+	for (int j = sa.y; j <= sb.y; j++)
+	{
+		for (int i = sa.x; i <= sb.x; i++)
+		{
+			// 计算当前像素的索引
+			int pixelIndex = (j * obr_x + i) * 1;
+			
+			// Extracting color components from the float array
+			float r = obr_rgb[rOffset_obr + pixelIndex];
+			float g = obr_rgb[gOffset_obr + pixelIndex];
+			float b = obr_rgb[bOffset_obr + pixelIndex];
+
+
+			// 将 R, G, B 分别存储到 rgb_sbuffer 中的分段区域
+            rgb_sbuffer[rOffset_sbuffer + index] = r;
+            rgb_sbuffer[gOffset_sbuffer + index] = g;
+            rgb_sbuffer[bOffset_sbuffer + index] = b;
+			index++;
+		}
+	}
+}
+
 void Processor::compositng(const int u)
 {
 	int index = 0;
@@ -1032,6 +1064,71 @@ void Processor::compositngColor(const int u)
 		}
 	}
 }
+
+void Processor::compositngColorRRGGBB(const int u)
+{
+	int index = 0;
+
+	int totalPixels = obr_x * obr_y;
+
+	// R, G, B 通道在 obr_rgb 中的起始偏移量
+    int rOffset_obr = 0;                      // R 通道从 0 开始
+    int gOffset_obr = totalPixels;            // G 通道从 totalPixels 开始
+    int bOffset_obr = totalPixels * 2;        // B 通道从 2 * totalPixels 开始
+
+	// R, G, B 通道在 rgb_sbuffer 中的起始偏移量
+    int rOffset_sbuffer = 0;                     	 // R 通道从 0 开始
+    int gOffset_sbuffer = tmpRecvCound / 3;          // G 通道从 rgb_sbuffer 中的1/3开始
+    int bOffset_sbuffer = tmpRecvCound / 3 * 2;      // B 通道从 rgb_sbuffer 的2/3处开始
+	index = 0;
+	for (int y = obr_rgb_a.y; y <= obr_rgb_b.y; y++)
+	{
+		for (int x = obr_rgb_a.x; x <= obr_rgb_b.x; x++)
+		{
+			int pixelIndex = (y * obr_x + x) * 1;
+
+			// 从 obr_rgb 数组中读取 rgb 分量
+			float r_float = obr_rgb[rOffset_obr + pixelIndex];  // 从 R 通道提取
+			float g_float = obr_rgb[gOffset_obr + pixelIndex];  // 从 G 通道提取
+			float b_float = obr_rgb[bOffset_obr + pixelIndex];  // 从 B 通道提取
+
+
+			// 从 rgb_rbuffer 中获取 R, G, B 分量
+            float r_float_sbuffer = rgb_rbuffer[rOffset_sbuffer + index];  // 从 rgb_rbuffer 的 R 通道提取
+            float g_float_sbuffer = rgb_rbuffer[gOffset_sbuffer + index];  // 从 rgb_rbuffer 的 G 通道提取
+            float b_float_sbuffer = rgb_rbuffer[bOffset_sbuffer + index];  // 从 rgb_rbuffer 的 B 通道提取
+
+
+			// 使用完整合成后的 Alpha 值
+			float a_float = alpha_values_u[u][y][x];
+
+			if (!plan[u].over)
+			{ // nase data su front
+				// Convert to back-to-front
+				r_float = r_float_sbuffer + r_float * (1.0f - a_float); // Red
+				g_float = g_float_sbuffer + g_float * (1.0f - a_float); // Green
+				b_float = b_float_sbuffer + b_float * (1.0f - a_float); // Blue
+			}
+			else
+			{ // prijate data su 'nad'
+				// Convert to back-to-front
+				r_float = r_float + r_float_sbuffer * (1.0f - a_float); // Red
+				g_float = g_float + g_float_sbuffer * (1.0f - a_float); // Green
+				b_float = b_float + b_float_sbuffer * (1.0f - a_float); // Blue
+			}
+
+			// 将修改后的 Color 分量写回 color 数组
+			obr_rgb[rOffset_obr + pixelIndex] = r_float;
+			obr_rgb[gOffset_obr + pixelIndex] = g_float;
+			obr_rgb[bOffset_obr + pixelIndex] = b_float;
+
+			index++;
+		}
+	}
+}
+
+
+
 
 void Processor::reset()
 {
@@ -1442,4 +1539,3 @@ void Processor::initOpti()
 	initCamera(rozm_x, rozm_y, rozm_z);
 	setRatioUV();
 }
-

@@ -133,11 +133,15 @@ private:
 	void setDimensions(const int u, const Point2Di& a, const Point2Di& b, Point2Di& sa, Point2Di& sb, Point2Di& ra, Point2Di& rb);
 	void loadBuffer(const Point2Di& sa, const Point2Di& sb);
 	void loadColorBuffer(const Point2Di& sa, const Point2Di& sb);
+	void loadColorBufferRRGGBB(const Point2Di& sa, const Point2Di& sb);
 	void compositng(const int u);
 	void visibleFunc(const int u);
 	void compositngColor(const int u);
+	void compositngColorRRGGBB(const int u);
 	void reset();
 	bool read_data(const std::string& s, float3& a, float3& b, cudaExtent volumeTotalSize);
 	
 };
+
+
 

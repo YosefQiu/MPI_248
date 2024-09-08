@@ -179,9 +179,9 @@ int main(int argc, char* argv[])
 
 	// 打印有效数据范围
 	cudaMemcpy(h_minMaxXY, d_minMaxXY, 4 * sizeof(uint), cudaMemcpyDeviceToHost);
-	std::cout << "[range]:: PID [ " << p->Processor_ID << " ] [ MinX, MinY ] , [ MaxX, MaxY ] [ " 
-		<< h_minMaxXY[0] << " , " << h_minMaxXY[1] << " ] [ " 
-		<< h_minMaxXY[2] << " , " << h_minMaxXY[3] << " ]" << std::endl;
+	// std::cout << "[range]:: PID [ " << p->Processor_ID << " ] [ MinX, MinY ] , [ MaxX, MaxY ] [ " 
+	// 	<< h_minMaxXY[0] << " , " << h_minMaxXY[1] << " ] [ " 
+	// 	<< h_minMaxXY[2] << " , " << h_minMaxXY[3] << " ]" << std::endl;
 	cudaFree(d_minMaxXY);
 
 	// Check for kernel errors
@@ -233,27 +233,9 @@ int main(int argc, char* argv[])
 	// 同步所有进程，确保每个进程都在同一个时刻开始计时
 	MPI_Barrier(MPI_COMM_WORLD);
 	double start_time = MPI_Wtime(); // 开始计时
-	//p->binarySwap_Alpha_GPU(d_output_alpha);
+	
 	p->binarySwap_Alpha(h_alpha);
 
-	int totalSize =  p->obr_y * p->obr_x;
-	float* h_alpha2 = new float[totalSize];
-
-	// 从 GPU 上将 d_alpha_values_u 拷贝到 CPU
-	cudaMemcpy(h_alpha2, p->d_obr_alpha, totalSize * sizeof(float), cudaMemcpyDeviceToHost);
-
-	if(p->Processor_ID == 1)
-	{
-	// 验证拷贝下来的数据是否准确
-		for (auto i = 0; i < p->h_s_len; i++)
-		{
-			if (p->h_alpha_sbuffer[i] != p->alpha_sbuffer[i])
-				std::cout << "[ERROR]:: PID [ " << p->Processor_ID << " ] alpha swap error." << std::endl;
-		}
-		// std::cout << "[ERROR]:: PID [ " << p->Processor_ID << " ] alpha swap same=========." << std::endl;
-	}
-	
-	
 	float global_error_bounded = 1E-2;
 	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
 	int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
@@ -286,7 +268,7 @@ int main(int argc, char* argv[])
 	
 	MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
 	double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
-	p->binarySwap_RGB(tmp_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
+	p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
 	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 	double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
 	double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
@@ -317,7 +299,9 @@ int main(int argc, char* argv[])
 	if (p->Processor_ID == 0 && p->kdTree->depth != 0)
 	{
 		float* obr_rgba = nullptr;
-		Utils::combineRGBA(p->obr_rgb, p->obr_alpha, image_width, image_height, obr_rgba);
+		float* reslut_rgb = new float[image_width * image_height * 3];
+		Utils::convertRRRGGGBBBtoRGB(p->obr_rgb, image_width * image_height * 3, reslut_rgb);
+		Utils::combineRGBA(reslut_rgb, p->obr_alpha, image_width, image_height, obr_rgba);
 		unsigned char* h_img_uc = new unsigned char[image_width * image_height * 4];
 		for (int i = 0; i < image_width * image_height * 4; ++i) {
 			h_img_uc[i] = static_cast<unsigned char>(obr_rgba[i] * 255.0f);
