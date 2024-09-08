@@ -138,6 +138,7 @@ private:
 	void visibleFunc(const int u);
 	void compositngColor(const int u);
 	void compositngColorRRGGBB(const int u);
+	void compositngColorRRGGBB(const int u, float* buffer);
 	void reset();
 	bool read_data(const std::string& s, float3& a, float3& b, cudaExtent volumeTotalSize);
 	
