@@ -46,21 +46,40 @@ __global__ void updateAlpha(float* d_img_alpha, float* d_alpha_rbuffer, float* d
 
 __global__ void processReceivedAlpha(float* d_img_alpha, float* d_fbuffer, Point2Di fa, Point2Di fb, int obr_x)
 {
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int x = blockIdx.x * blockDim.x + threadIdx.x + fa.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y + fa.y;
+	
 	if (x >= fa.x && x <= fb.x && y >= fa.y && y <= fb.y) 
 	{
 		int img_index = y * obr_x + x; // 在 d_img_alpha 中的索引
-		int buffer_index = (y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x) + 4; // 在接收缓冲区中的索引
-
+		int buffer_index = (y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x); // 在接收缓冲区中的索引
+		
 		// 从接收缓冲区中读取 Alpha 值
 		float a_float = d_fbuffer[buffer_index];
 
 		// 将 Alpha 值写回 d_img_alpha
 		d_img_alpha[img_index] = a_float;
+		
 	}
 }
 
+__global__ void copyAlphaToBuffer(float* d_img_alpha, float* d_fbuffer, Point2Di fa, Point2Di fb, int obr_x)
+{
+    int x = blockIdx.x * blockDim.x + threadIdx.x + fa.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y + fa.y;
+
+    if (x >= fa.x && x <= fb.x && y >= fa.y && y <= fb.y)
+    {
+        // 计算 img_alpha 中的索引
+        int img_index = y * obr_x + x;
+        
+        // 计算 d_fbuffer 中的索引，从第 4 个位置开始存储
+        int buffer_index = (y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x) ;
+
+        // 将 d_img_alpha 中的值拷贝到 d_fbuffer 中
+        d_fbuffer[buffer_index] = d_img_alpha[img_index];
+    }
+}
 
 void Processor::init_node(float3& a, float3& b, int id)
 {
@@ -302,13 +321,13 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 	cudaMalloc(&d_alpha_values_u, totalSize * sizeof(float));
 
 
-	// alpha_values_u = new float** [kdTree->depth];
-	// for (int u = 0; u < kdTree->depth; ++u) {
-	// 	alpha_values_u[u] = new float* [obr_y];
-	// 	for (int y = 0; y < obr_y; ++y) {
-	// 		alpha_values_u[u][y] = new float[obr_x];
-	// 	}
-	// }
+	alpha_values_u = new float** [kdTree->depth];
+	for (int u = 0; u < kdTree->depth; ++u) {
+		alpha_values_u[u] = new float* [obr_y];
+		for (int y = 0; y < obr_y; ++y) {
+			alpha_values_u[u][y] = new float[obr_x];
+		}
+	}
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	// part I binary swap
@@ -355,7 +374,8 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 					 d_alpha_rbuffer, recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 	
 		cudaMemcpy(h_alpha_rbuffer, d_alpha_rbuffer, recvcount * sizeof(float), cudaMemcpyDeviceToHost);
-
+		
+		
 		// 更新alpha的值
         dim3 gridDimUpdate((rb.x - ra.x + 1 + blockDim.x - 1) / blockDim.x, (rb.y - ra.y + 1 + blockDim.y - 1) / blockDim.y);
         updateAlpha<<<gridDimUpdate, blockDim>>>(d_img_alpha, d_alpha_rbuffer, d_alpha_values_u, 
@@ -376,69 +396,145 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 		u++;
 		//std::cout << "[binarySwap_Alpha_GPU]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 	}
+	MPI_Barrier(MPI_COMM_WORLD);
+	obr_alpha = new float[obr_x * obr_y];
+	cudaMemcpy(obr_alpha, d_img_alpha, obr_x * obr_y * sizeof(float), cudaMemcpyDeviceToHost);
+	cudaDeviceSynchronize();
+	MPI_Barrier(MPI_COMM_WORLD);
+	// part II final image gathering
+	// 计算缓冲区大小
+	int sendWidth = std::abs(obr_alpha_b.x - obr_alpha_a.x) + 1;
+	int sendHeight = std::abs(obr_alpha_b.y - obr_alpha_a.y) + 1;
+	int bufsize = sendWidth * sendHeight * 1;
+	bufsize += 4;
+	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
 
+	if (Processor_ID == 0)
+	{
+		for (u = 1; u < this->Processor_Size; u++)
+		{
+			MPI_Recv(&fbuffer[0], bufsize, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &Processor_status);
+			Point2Di fa, fb;
+			fa.x = (int)fbuffer[0]; fa.y = (int)fbuffer[1]; fb.x = (int)fbuffer[2]; fb.y = (int)fbuffer[3];
+			int index = 4;
+			for (int j = fa.y; j <= fb.y; j++)
+			{
+				for (int i = fa.x; i <= fb.x; i++)
+				{
+					float a = fbuffer[index++];
+
+					int pixelIndex = j * obr_x + i;
+					obr_alpha[pixelIndex] = a;
+				}
+			}
+		}
+
+		obr_alpha_a.x = 0; obr_alpha_a.y = 0;
+		obr_alpha_b.x = obr_x; obr_alpha_b.y = obr_y;
+	}
+	else
+	{
+		fbuffer[0] = obr_alpha_a.x; fbuffer[1] = obr_alpha_a.y;
+		fbuffer[2] = obr_alpha_b.x; fbuffer[3] = obr_alpha_b.y;
+
+		int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
+		for (int j = obr_alpha_a.y; j <= obr_alpha_b.y; j++)
+		{
+			for (int i = obr_alpha_a.x; i <= obr_alpha_b.x; i++)
+			{
+				// 计算当前像素在 obr_alpha 数组中的起始位置
+				int pixelIndex = j * obr_x + i;
+
+				// 从 obr_alpha 数组中读取Alpha分量
+				float a_float = obr_alpha[pixelIndex];
+
+				// 将Alpha分量存储到 fbuffer 中
+				fbuffer[index++] = a_float;
+			}
+		}
+		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
+	}
+	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
+	// std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
+	this->reset();
 
 
 	// // part II final image gathering
 	// // 计算缓冲区大小
 	// int sendWidth = std::abs(obr_alpha_b.x - obr_alpha_a.x) + 1;
 	// int sendHeight = std::abs(obr_alpha_b.y - obr_alpha_a.y) + 1;
-	// int bufsize = sendWidth * sendHeight * 1;
-	// bufsize += 4;
+	// int bufsize = sendWidth * sendHeight * 1;  
 	// float* d_fbuffer;
-	// cudaMalloc(&d_fbuffer, bufsize * sizeof(float)); // GPU 缓冲区
-
+	
 	// if (Processor_ID == 0)
 	// {
 	// 	for (u = 1; u < this->Processor_Size; u++)
 	// 	{
-	// 		MPI_Recv(d_fbuffer, bufsize, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &Processor_status);
+	// 		int* h_fbuffer = new int[4];
+	// 		MPI_Recv(h_fbuffer, 4, MPI_INT, u, 0, MPI_COMM_WORLD, &Processor_status);
+
 	// 		Point2Di fa, fb;
-	// 		cudaMemcpyFromSymbol(&fa.x, &d_fbuffer[0], sizeof(int), 0, cudaMemcpyDeviceToHost);
-    //     	cudaMemcpyFromSymbol(&fa.y, &d_fbuffer[1], sizeof(int), 0, cudaMemcpyDeviceToHost);
-    //     	cudaMemcpyFromSymbol(&fb.x, &d_fbuffer[2], sizeof(int), 0, cudaMemcpyDeviceToHost);
-    //     	cudaMemcpyFromSymbol(&fb.y, &d_fbuffer[3], sizeof(int), 0, cudaMemcpyDeviceToHost);
+	// 		fa.x = h_fbuffer[0];
+	// 		fa.y = h_fbuffer[1];
+	// 		fb.x = h_fbuffer[2];
+	// 		fb.y = h_fbuffer[3];
+
+	// 		cudaMalloc(&d_fbuffer, bufsize * sizeof(float)); // GPU 缓冲区
+	// 		MPI_Recv(d_fbuffer, bufsize, MPI_FLOAT, u, 1, MPI_COMM_WORLD, &Processor_status);
+			
+	// 		std::cout << "Received fa fb from PID " << u << ": "
+	// 				<< fa.x << ", " << fa.y << " to " << fb.x << ", " << fb.y << std::endl;
 
 	// 		dim3 blockDim(16, 16);
 	// 		dim3 gridDim((fb.x - fa.x + 1 + blockDim.x - 1) / blockDim.x, (fb.y - fa.y + 1 + blockDim.y - 1) / blockDim.y);
-	// 		processReceivedAlpha<<<gridDim, blockDim>>>(d_img_alpha, d_fbuffer, fa, fb, obr_x);
-    //    		cudaDeviceSynchronize();
-
-			
+	// 		processReceivedAlpha<<<gridDim, blockDim>>>(d_img_alpha, d_fbuffer + 4, fa, fb, obr_x);
+	// 		cudaDeviceSynchronize();
 	// 	}
 
-	// 	obr_alpha_a.x = 0; obr_alpha_a.y = 0;
-	// 	obr_alpha_b.x = obr_x; obr_alpha_b.y = obr_y;
+	// 	obr_alpha_a.x = 0;
+	// 	obr_alpha_a.y = 0;
+	// 	obr_alpha_b.x = obr_x;
+	// 	obr_alpha_b.y = obr_y;
 	// }
 	// else
 	// {
-	// 	cudaMemcpyToSymbol(&d_fbuffer[0], &obr_alpha_a.x, sizeof(int), 0, cudaMemcpyHostToDevice);
-    // 	cudaMemcpyToSymbol(&d_fbuffer[1], &obr_alpha_a.y, sizeof(int), 0, cudaMemcpyHostToDevice);
-   	//  	cudaMemcpyToSymbol(&d_fbuffer[2], &obr_alpha_b.x, sizeof(int), 0, cudaMemcpyHostToDevice);
-    // 	cudaMemcpyToSymbol(&d_fbuffer[3], &obr_alpha_b.y, sizeof(int), 0, cudaMemcpyHostToDevice);
-
-
-	// 	int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
-	// 	for (int j = obr_alpha_a.y; j <= obr_alpha_b.y; j++)
-	// 	{
-	// 		for (int i = obr_alpha_a.x; i <= obr_alpha_b.x; i++)
-	// 		{
-	// 			// 计算当前像素在 obr_alpha 数组中的起始位置
-	// 			int pixelIndex = j * obr_x + i;
-
-	// 			// 将Alpha值写入fbuffer
-    //         	cudaMemcpyToSymbol(&d_fbuffer[index], &obr_alpha[pixelIndex], sizeof(float), cudaMemcpyHostToDevice);
-    //         	index++;
-	// 		}
+	// 	cudaMalloc(&d_fbuffer, bufsize * sizeof(float)); // GPU 缓冲区
+	// 	int h_fbuffer[4] = {
+	// 		obr_alpha_a.x,
+	// 		obr_alpha_a.y,
+	// 		obr_alpha_b.x,
+	// 		obr_alpha_b.y
+	// 	};
+	// 	// MPI 发送范围
+	// 	MPI_Send(h_fbuffer, 4, MPI_INT, 0, 0, MPI_COMM_WORLD);
+	// 	Point2Di fa, fb;
+	// 	fa.x = h_fbuffer[0];
+	// 	fa.y = h_fbuffer[1];
+	// 	fb.x = h_fbuffer[2];
+	// 	fb.y = h_fbuffer[3];
+	// 	// 将元数据从主机拷贝到设备缓冲区
+	// 	cudaError_t err = cudaMemcpy(d_fbuffer, h_fbuffer, 4 * sizeof(float), cudaMemcpyHostToDevice);
+	// 	if (err != cudaSuccess) {
+	// 		printf("Error 1st cudaMemcpy: %s\n", cudaGetErrorString(err));
 	// 	}
-	// 	MPI_Send(d_fbuffer, bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
+
+	// 	dim3 blockDim(16, 16);
+	// 	dim3 gridDim((fb.x - fa.x + 1 + blockDim.x - 1) / blockDim.x, (fb.y - fa.y + 1 + blockDim.y - 1) / blockDim.y);
+	// 	copyAlphaToBuffer<<<gridDim, blockDim>>>(d_img_alpha, d_fbuffer, fa, fb, obr_x);
+	// 	cudaDeviceSynchronize();
+	// 	std::cout << "Sending fa fb from PID " << Processor_ID << ": "
+	// 			<< obr_alpha_a.x << ", " << obr_alpha_a.y << " to " << obr_alpha_b.x << ", " << obr_alpha_b.y << std::endl;
+
+	// 	MPI_Send(d_fbuffer, bufsize, MPI_FLOAT, 0, 1, MPI_COMM_WORLD);
+	// 	cudaFree(d_fbuffer);
 	// }
-	// cudaFree(d_fbuffer);
-	// std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
+	
+	
+	// //std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
 	// this->reset();
 
-	obr_alpha_a.x = 0; obr_alpha_a.y = 0;
-	obr_alpha_b.x = obr_x - 1; obr_alpha_b.y = obr_y - 1;
+	// //obr_alpha_a.x = 0; obr_alpha_a.y = 0;
+	// //obr_alpha_b.x = obr_x - 1; obr_alpha_b.y = obr_y - 1;
 }
 
 void Processor::binarySwap_Alpha(float* img_alpha)
@@ -479,6 +575,7 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 				alpha_sbuffer[index++] = a;
 			}
 		}
+		
 
 		// 计算发送和接收的大小
 		int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 1;
@@ -549,6 +646,7 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
 	// std::cout << "PID [ " << Processor_ID << " ] finished IMAGE ALPHA COMPOSITING " << std::endl;
 	this->reset();
+
 }
 
 void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression)
@@ -593,9 +691,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			// }
 			size_t outSize; 
 			size_t nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
-			// float* new_buffer = new float[nbEle];
-			// Utils::convertRGBtoRRRGGGBBB(rgb_sbuffer, nbEle, new_buffer);
-			// memcpy(rgb_sbuffer, new_buffer, nbEle * sizeof(float));
+			
 			
 			double start_compress = MPI_Wtime();
 			unsigned char* bytes =  SZx_fast_compress_args(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
@@ -630,9 +726,9 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			float* tmp_buffer = new float[recv_nbEle];
 			//Utils::convertRRRGGGBBBtoRGB(decompressedData, recv_nbEle, tmp_buffer);
 			tmpRecvCound = recv_nbEle;
-			//memcpy(rgb_rbuffer, decompressedData, recv_nbEle * sizeof(float));
+			
 			obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
-			// this->compositngColor(u);
+
 			this->compositngColorRRGGBB(u, decompressedData);
 			//计算实际误差
 
@@ -658,7 +754,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			totalReceivedBytes += recvcount * sizeof(float);
 
 			obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
-			// this->compositngColor(u);
+		
 			this->compositngColorRRGGBB(u);
 		}
 		

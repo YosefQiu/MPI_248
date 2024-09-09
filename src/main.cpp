@@ -233,31 +233,46 @@ int main(int argc, char* argv[])
 	// 同步所有进程，确保每个进程都在同一个时刻开始计时
 	MPI_Barrier(MPI_COMM_WORLD);
 	double start_time = MPI_Wtime(); // 开始计时
-	
-	p->binarySwap_Alpha(h_alpha);
+	p->binarySwap_Alpha_GPU(d_output_alpha);
+	//p->binarySwap_Alpha(h_alpha);
 
-	float global_error_bounded = 1E-2;
-	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
-	int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
-	float* error_array = new float[range_w * range_h];
-	if (p->Processor_Size == 2 || p->Processor_Size == 4)
+	// float global_error_bounded = 1E-2;
+	// int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
+	// int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
+	// float* error_array = new float[range_w * range_h];
+	// if (p->Processor_Size == 2 || p->Processor_Size == 4)
+	// {
+	// 	for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
+	// 	{
+	// 		for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
+	// 		{
+	// 			auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
+	// 			auto tmp_error = global_error_bounded / (1 + p_alpha);
+	// 			error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
+	// 		}
+	// 	}
+	
+	// 	// 找到error_array中的最大值
+	// 	float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
+	// 	float max_error = *max_error_ptr;
+	// 	std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
+	// }
+
+	// TODO test d_alpha_valus_ u to cpu p->alpha_value_u
+	int value_size = p->kdTree->depth * p->obr_x * p->obr_y;
+	float* tmp_u = new float[value_size];
+	cudaMemcpy(tmp_u, p->d_alpha_values_u, value_size * sizeof(float), cudaMemcpyDeviceToHost);
+	int idx = 0;
+	for (int u = 0; u < p->kdTree->depth; ++u) 
 	{
-		for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
+		for (int y = 0; y < p->obr_y; ++y) 
 		{
-			for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
+			 for (int x = 0; x < p->obr_x; ++x) 
 			{
-				auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
-				auto tmp_error = global_error_bounded / (1 + p_alpha);
-				error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
+				p->alpha_values_u[u][y][x] = tmp_u[idx++];  // 从 tmp_u 中提取值并赋给 alpha_values_u[u][y][x]
 			}
 		}
-	
-		// 找到error_array中的最大值
-		float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
-		float max_error = *max_error_ptr;
-		std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
 	}
-
 
 	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 	double end_time = MPI_Wtime(); // 结束计时
@@ -298,6 +313,9 @@ int main(int argc, char* argv[])
 	// 保存最终结果
 	if (p->Processor_ID == 0 && p->kdTree->depth != 0)
 	{
+		float* result_alpha = new float[image_width * image_height];
+		cudaMemcpy(result_alpha, p->d_obr_alpha, image_width * image_height * sizeof(float), cudaMemcpyDeviceToHost);
+
 		float* obr_rgba = nullptr;
 		float* reslut_rgb = new float[image_width * image_height * 3];
 		Utils::convertRRRGGGBBBtoRGB(p->obr_rgb, image_width * image_height * 3, reslut_rgb);
