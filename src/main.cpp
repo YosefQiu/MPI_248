@@ -257,21 +257,21 @@ int main(int argc, char* argv[])
 		std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
 	}
 
-	// TODO test d_alpha_valus_ u to cpu p->alpha_value_u
-	int value_size = p->kdTree->depth * p->obr_x * p->obr_y;
-	float* tmp_u = new float[value_size];
-	cudaMemcpy(tmp_u, p->d_alpha_values_u, value_size * sizeof(float), cudaMemcpyDeviceToHost);
-	int idx = 0;
-	for (int u = 0; u < p->kdTree->depth; ++u) 
-	{
-		for (int y = 0; y < p->obr_y; ++y) 
-		{
-			 for (int x = 0; x < p->obr_x; ++x) 
-			{
-				p->alpha_values_u[u][y][x] = tmp_u[idx++];  // 从 tmp_u 中提取值并赋给 alpha_values_u[u][y][x]
-			}
-		}
-	}
+	// // TODO test d_alpha_valus_ u to cpu p->alpha_value_u
+	// int value_size = p->kdTree->depth * p->obr_x * p->obr_y;
+	// float* tmp_u = new float[value_size];
+	// cudaMemcpy(tmp_u, p->d_alpha_values_u, value_size * sizeof(float), cudaMemcpyDeviceToHost);
+	// int idx = 0;
+	// for (int u = 0; u < p->kdTree->depth; ++u) 
+	// {
+	// 	for (int y = 0; y < p->obr_y; ++y) 
+	// 	{
+	// 		 for (int x = 0; x < p->obr_x; ++x) 
+	// 		{
+	// 			p->alpha_values_u[u][y][x] = tmp_u[idx++];  // 从 tmp_u 中提取值并赋给 alpha_values_u[u][y][x]
+	// 		}
+	// 	}
+	// }
 
 	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 	double end_time = MPI_Wtime(); // 结束计时
@@ -282,7 +282,8 @@ int main(int argc, char* argv[])
 	
 	MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
 	double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
-	p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
+	//p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
+	p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
 	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 	double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
 	double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒

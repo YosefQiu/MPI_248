@@ -33,6 +33,7 @@ public:
 	float* d_alpha_rbuffer;
 
 
+
 	float* h_alpha_sbuffer;
 	float* h_alpha_rbuffer;
 	float h_s_len;
@@ -40,6 +41,8 @@ public:
 
 	float* rgb_sbuffer;
 	float* rgb_rbuffer;
+	float* d_rgb_sbuffer;
+	float* d_rgb_rbuffer;
 
 	float* sbuffer;
 	float* rbuffer;
@@ -57,6 +60,7 @@ public:
 	float* obr_alpha;				// 图像alpha 数组
 	float* d_obr_alpha;				// GPU上的alpha数组
 	float* obr_rgb;					// 图像rgb数组
+	float* d_obr_rgb;				// GPU上的rgb数组
 	float*** alpha_values_u;		// 每次交换的当前的alpha 值
 	float* d_alpha_values_u;		// GPU上的每次交换的当前的alpha 值
 
