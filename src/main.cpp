@@ -234,29 +234,28 @@ int main(int argc, char* argv[])
 	MPI_Barrier(MPI_COMM_WORLD);
 	double start_time = MPI_Wtime(); // 开始计时
 	p->binarySwap_Alpha_GPU(d_output_alpha);
-	//p->binarySwap_Alpha(h_alpha);
 
-	// float global_error_bounded = 1E-2;
-	// int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
-	// int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
-	// float* error_array = new float[range_w * range_h];
-	// if (p->Processor_Size == 2 || p->Processor_Size == 4)
-	// {
-	// 	for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
-	// 	{
-	// 		for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
-	// 		{
-	// 			auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
-	// 			auto tmp_error = global_error_bounded / (1 + p_alpha);
-	// 			error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
-	// 		}
-	// 	}
+	float global_error_bounded = 1E-2;
+	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
+	int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
+	float* error_array = new float[range_w * range_h];
+	if (p->Processor_Size == 2 || p->Processor_Size == 4)
+	{
+		for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
+		{
+			for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
+			{
+				auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
+				auto tmp_error = global_error_bounded / (1 + p_alpha);
+				error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
+			}
+		}
 	
-	// 	// 找到error_array中的最大值
-	// 	float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
-	// 	float max_error = *max_error_ptr;
-	// 	std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
-	// }
+		// 找到error_array中的最大值
+		float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
+		float max_error = *max_error_ptr;
+		std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
+	}
 
 	// TODO test d_alpha_valus_ u to cpu p->alpha_value_u
 	int value_size = p->kdTree->depth * p->obr_x * p->obr_y;
@@ -289,8 +288,6 @@ int main(int argc, char* argv[])
 	double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
 	Utils::recordCudaRenderTime("./binarySwap_RGB_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time_swap);
 	
-    
-
 	// 计算通信量
 	size_t totalSentBytesAllProcesses = 0;
     size_t totalReceivedBytesAllProcesses = 0;
