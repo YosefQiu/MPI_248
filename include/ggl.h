@@ -53,6 +53,7 @@
 // SZX
 #include "szx.h"
 #include "szx_rw.h"
+#include "cuszx_entry.h"
 #include <unistd.h>
 
 extern struct timeval startTime;

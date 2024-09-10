@@ -415,13 +415,13 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 	cudaMalloc(&d_alpha_values_u, totalSize * sizeof(float));
 
 
-	alpha_values_u = new float** [kdTree->depth];
-	for (int u = 0; u < kdTree->depth; ++u) {
-		alpha_values_u[u] = new float* [obr_y];
-		for (int y = 0; y < obr_y; ++y) {
-			alpha_values_u[u][y] = new float[obr_x];
-		}
-	}
+	// alpha_values_u = new float** [kdTree->depth];
+	// for (int u = 0; u < kdTree->depth; ++u) {
+	// 	alpha_values_u[u] = new float* [obr_y];
+	// 	for (int y = 0; y < obr_y; ++y) {
+	// 		alpha_values_u[u][y] = new float[obr_x];
+	// 	}
+	// }
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	// part I binary swap
@@ -1055,13 +1055,15 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			// }
 			size_t outSize; 
 			size_t nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
-
+			int blockSize = 64;
 			// 先将数据拷贝到CPU
 			float* tmp_rgb_sbuffer = new float[nbEle];
 			cudaMemcpy(tmp_rgb_sbuffer, d_rgb_sbuffer, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
 
 			double start_compress = MPI_Wtime();
-			unsigned char* bytes =  SZx_fast_compress_args(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, tmp_rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
+			// unsigned char* bytes =  SZx_fast_compress_args(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, tmp_rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
+			unsigned char* bytes = cuSZx_fast_compress_args_unpredictable_blocked_float(tmp_rgb_sbuffer, &outSize, errorBound, nbEle, blockSize);
+			cudaError_t err = cudaGetLastError();
 			double end_compress = MPI_Wtime();
 			compress_time += (end_compress - start_compress);
 			// way 1
@@ -1086,7 +1088,11 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 					receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
 			double start_decompress = MPI_Wtime();
-			float *decompressedData = (float*)SZx_fast_decompress(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
+			
+			// float *decompressedData = (float*)SZx_fast_decompress(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
+			float* decompressedData;
+			cuSZx_fast_decompress_args_unpredictable_blocked_float(&decompressedData, recv_nbEle, receivedCompressedBytes);
+			
 			double end_decompress = MPI_Wtime();
 			decompress_time += (end_decompress - start_decompress);
 			float* tmp_buffer = new float[recv_nbEle];
@@ -1097,8 +1103,8 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			
 			tmpRecvCound = recvcount;
 
-			totalSentBytes += sendcount * sizeof(float);
-			totalReceivedBytes += recvcount * sizeof(float);
+			totalSentBytes += outSize;
+			totalReceivedBytes += recv_byteLength;
 
 			obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
 			// this->compositngColorRRGGBB(u);

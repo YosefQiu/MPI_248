@@ -1,8 +1,8 @@
 process_count: 2
-CUDA_DVR: 2.238335
+CUDA_DVR: 1.6936650000000002
 alpha_swap: 3.419995
-rgb_swap: 30.0171
-    round1: 0.97415 1.22637 8.05406
+rgb_swap: 21.9698
+    round1: 1.69367 1.46886 4.12827
 
 process_count: 2 No Compression
 CUDA_DVR: 2.233395
@@ -11,11 +11,11 @@ rgb_swap: 27.688699999999997
     round1: 0.0 0.0 3.66029
 
 process_count: 4
-CUDA_DVR: 2.0248324999999996
+CUDA_DVR: 1.47366
 alpha_swap: 4.1434
-rgb_swap: 47.7
-    round1: 1.17249 1.23889 8.10150
-    round2: 1.81894 1.48191 11.02405
+rgb_swap: 37.2147
+    round1: 1.41145 1.38945 4.16227
+    round2: 2.26569 2.25874 6.67368
 
 process_count: 4 No Compression
 CUDA_DVR: 1.9146225000000001
@@ -25,35 +25,35 @@ rgb_swap: 43.08369999999999
     round2: 0.0 0.0 5.06493
 
 process_count: 8
-CUDA_DVR: 1.1470399999999998
+CUDA_DVR: 1.09189675
 alpha_swap: 5.782860833333333
-rgb_swap: 137.32334166666666
-    round1: 0.37113 0.38912 6.27428
-    round2: 0.61333 0.49523 8.82202
-    round3: 0.69932 0.55893 9.79164
+rgb_swap: 53.425718749999994
+    round1: 0.93385 1.10806 3.79538
+    round2: 1.43919 1.73534 5.93459
+    round3: 2.09198 2.15635 7.27623
 
 process_count: 8 No Compression
 CUDA_DVR: 1.144345
 alpha_swap: 5.79656625
-rgb_swap: 124.11350000000002
+rgb_swap: 54.48276249999999
     round1: 0.0 0.0 5.19531
     round2: 0.0 0.0 7.21751
     round3: 0.0 0.0 7.89868
 
 process_count: 16
-CUDA_DVR: 0.8281139999999999
+CUDA_DVR: 0.9204921249999999
 alpha_swap: 7.0216325
-rgb_swap: 107.038625
-    round1: 1.04152 1.10367 8.45816
-    round2: 1.77707 1.42473 11.97612
-    round3: 1.98399 1.57485 13.51934
-    round4: 2.12886 1.68828 14.39160
+rgb_swap: 89.34240625
+    round1: 1.05245 1.21020 4.77144
+    round2: 1.60035 1.79627 7.36427
+    round3: 2.13368 2.17703 8.87666
+    round4: 2.41220 2.39503 9.91477
 
 process_count: 16 No Compression
 CUDA_DVR: 0.82357375
 alpha_swap: 7.143868125
-rgb_swap: 124.3750625
-    round1: 0.0 0.0 5.21261
-    round2: 0.0 0.0 7.84950
-    round3: 0.0 0.0 8.96116
-    round4: 0.0 0.0 9.31251
+rgb_swap: 191.40925
+    round1: 0.0 0.0 3.25544
+    round2: 0.0 0.0 5.22020
+    round3: 0.0 0.0 6.46275
+    round4: 0.0 0.0 10.12064
