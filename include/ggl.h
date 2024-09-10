@@ -56,6 +56,8 @@
 #include "cuszx_entry.h"
 #include <unistd.h>
 
+#include <omp.h>
+
 extern struct timeval startTime;
 extern struct timeval endTime;  /* Start and end times */
 extern struct timeval costStart; /*only used for recording the cost*/

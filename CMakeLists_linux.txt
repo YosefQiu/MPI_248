@@ -29,11 +29,13 @@ file(GLOB Common_UtilNPP_HEADER_FILES Common/UtilNPP/*.h)
 include_directories(Common)
 
 # Add cusz szx
-include_directories("~/test_bin/include/szx")
+include_directories("~/third_bin/include/szx")
 include_directories("~/third_bin/include/cusz")
 link_directories("~/third_lib")
-link_directories("~/test_lib")
+link_directories("~/third_lib")
 
+# Find OpenMP package
+find_package(OpenMP REQUIRED)
 
 # 设置 MPI 编译器
 find_package(MPI REQUIRED)
@@ -61,7 +63,7 @@ add_executable(${PROJECT_NAME}
 
 # 查找并链接 CUSZ 和 SZX 库
 find_library(CUSZ_LIB cusz HINTS "~/third_lib")
-find_library(SZX_LIB SZx HINTS "~/test_lib")
+find_library(SZX_LIB SZx HINTS "~/third_lib")
 
 
 ## 链接 CUDA 和 MPI 库
@@ -74,7 +76,7 @@ find_library(SZX_LIB SZx HINTS "~/test_lib")
 
 # 链接 CUDA 和 MPI 库
 target_include_directories(${PROJECT_NAME} PRIVATE /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/include)
-target_link_libraries(${PROJECT_NAME} /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/lib/libmpi.so cuda stdc++ ${CUSZ_LIB} ${SZX_LIB})
+target_link_libraries(${PROJECT_NAME} /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/lib/libmpi.so cuda stdc++ ${CUSZ_LIB} ${SZX_LIB} OpenMP::OpenMP_CXX)
 
 # 设置 CUDA 的编译选项
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -I/opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/include")

@@ -1056,52 +1056,51 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			size_t outSize; 
 			size_t nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 			int blockSize = 64;
+
+			double start_compress = MPI_Wtime();
 			// 先将数据拷贝到CPU
 			float* tmp_rgb_sbuffer = new float[nbEle];
 			cudaMemcpy(tmp_rgb_sbuffer, d_rgb_sbuffer, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
-
-			double start_compress = MPI_Wtime();
-			// unsigned char* bytes =  SZx_fast_compress_args(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, tmp_rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
-			unsigned char* bytes = cuSZx_fast_compress_args_unpredictable_blocked_float(tmp_rgb_sbuffer, &outSize, errorBound, nbEle, blockSize);
-			cudaError_t err = cudaGetLastError();
+			unsigned char* bytes =  SZx_fast_compress_args(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, tmp_rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
 			double end_compress = MPI_Wtime();
 			compress_time += (end_compress - start_compress);
-			// way 1
-			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " CALC round [ " << u 
-				<< " ] COMPRESS nbEle [ " << nbEle << "] compression size [ " << outSize 
-				<< " ] CR " << 1.0f*nbEle*sizeof(float)/outSize << " ] " 
-				<< " errorBound " << errorBound << std::endl;
-	
-			// 测试。理论可以得到类似的结果 
-			// 解压缩需要 bytes, byteLength, nbEle 要用MPI发送
+
+			
+			// // 解压缩需要 bytes, byteLength, nbEle 要用MPI发送
+			// // 先发送 byteLength 和 nbEle
 			// 先发送 byteLength 和 nbEle
 			size_t sendInfo[2] = { outSize, nbEle };
 			size_t recvInfo[2];
 			MPI_Sendrecv(sendInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->Processor_ID,
-					recvInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+					     recvInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
 			size_t recv_byteLength = recvInfo[0];
 			size_t recv_nbEle = recvInfo[1];
 			// 发送压缩的数据
 			unsigned char* receivedCompressedBytes = new unsigned char[recv_byteLength];
 			MPI_Sendrecv(bytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
-					receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+						 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
+
+
+			
 			double start_decompress = MPI_Wtime();
 			
-			// float *decompressedData = (float*)SZx_fast_decompress(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
-			float* decompressedData;
-			cuSZx_fast_decompress_args_unpredictable_blocked_float(&decompressedData, recv_nbEle, receivedCompressedBytes);
-			
-			double end_decompress = MPI_Wtime();
-			decompress_time += (end_decompress - start_decompress);
-			float* tmp_buffer = new float[recv_nbEle];
-			tmpRecvCound = recv_nbEle;
+			float *decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
 			// 将decompressedData拷贝到GPU 的 d_rgb_rbuffer
 			cudaMemcpy(d_rgb_rbuffer, decompressedData, recv_nbEle * sizeof(float), cudaMemcpyHostToDevice);
-			cudaDeviceSynchronize();
+			double end_decompress = MPI_Wtime();
+			decompress_time += (end_decompress - start_decompress);
 			
-			tmpRecvCound = recvcount;
+			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " CALC round [ " << u 
+				<< " ] COMPRESS nbEle [ " << nbEle << "] compression size [ " << outSize 
+				<< " ] CR [" << 1.0f*nbEle*sizeof(float)/outSize << " ] " 
+				<< " errorBound " << errorBound 
+				<< " compress_time1 " << (end_compress - start_compress) * 1000.0f << " ms" 
+				<< " decompress_time1 " << (end_decompress - start_decompress) * 1000.0f << " ms"
+				<< std::endl;
+
+			tmpRecvCound = recv_nbEle;
 
 			totalSentBytes += outSize;
 			totalReceivedBytes += recv_byteLength;

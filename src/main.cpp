@@ -331,6 +331,7 @@ int main(int argc, char* argv[])
 		std::cout << "finished FIIIIIIIIIIII\n";
 		delete[] h_img_uc; h_img_uc = nullptr;
 		delete[] obr_rgba; obr_rgba = nullptr;
+
 	}
 
 
