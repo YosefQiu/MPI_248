@@ -121,7 +121,7 @@ public:
 	void initOpti();
 	void binarySwap(float* img);
 	void binarySwap_Alpha(float* img);
-	void binarySwap_RGB(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true);
+	void binarySwap_RGB(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true, bool bUseArea = true);
 	void binarySwap_Alpha_GPU(float* d_imgAlpha);
 	void binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true);
 public:

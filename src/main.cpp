@@ -33,6 +33,8 @@ Processor* p = nullptr;
 
 float dx, dy, dz;
 bool usecomress = false;
+bool useeffarea = false;
+
 
 #if __linux__
 struct timeval startTime;
@@ -69,12 +71,13 @@ int main(int argc, char* argv[])
 			image_width = std::atoi(argv[5]);
 			image_height = std::atoi(argv[6]);
 		}
-		if (argc >= 10)
+		if (argc >= 11)
 		{
 			dx = std::atof(argv[7]);
 			dy = std::atof(argv[8]);
 			dz = std::atof(argv[9]);
 			usecomress = std::atoi(argv[10]);
+			useeffarea = std::atoi(argv[11]);
 		}
 		else
 		{
@@ -282,7 +285,7 @@ int main(int argc, char* argv[])
 	
 	MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
 	double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
-	p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
+	p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
 	//p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
 	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 	double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间

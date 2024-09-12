@@ -716,10 +716,9 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 
 }
 
-void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression)
+void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression, bool bUseArea)
 {
-	bool bEffectiveArea = true;
-
+	
 	this->plan = new Plan[kdTree->depth];
 	float3 view_dir = camera->to - camera->from;
 	createPlan(Processor_ID, kdTree->depth, kdTree->root, view_dir, plan);
@@ -758,40 +757,50 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
 		// this->setDimensions(u, arae_a, arae_a, sa, sb, ra, rb);
 		// 填充缓冲区
-		bool flag = computeOverlap(sa, sb, ea, eb, overlap_a, overlap_b);
-		if(flag == false)
+
+		if(bUseArea == true)
 		{
-			// 如果没有交集，跳过这个轮次
-			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " No overlap in round [ " << u << " ]" << std::endl;
-			u++;
-			//obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
-			arae_a = ra; area_b = rb;
-			continue;
-		}
-		std::cout << "[======] PID " << Processor_ID << " u " << u << " sa sb [ " 
-		<< sa.x << " " << sa.y << " , " << sb.x << " " << sb.y << " ] ea eb [ "
-		<< ea.x << " " << ea.y << " , " << eb.x << " " << eb.y << " ] oa ob [ "
-		<< overlap_a.x << " " << overlap_a.y << " , " << overlap_b.x << " " << overlap_b.y << " ] "
-		<< std::endl;
-		
-		if(flag == false)
-		{
-			sa = overlap_a; sb = overlap_b;
-			int overlapInfo[4] = {overlap_a.x, overlap_a.y, overlap_b.x, overlap_b.y};
-			int recvOverlapInfo[4];
-			MPI_Sendrecv(overlapInfo, 4, MPI_INT, this->plan[u].pid, this->Processor_ID,
-						recvOverlapInfo, 4, MPI_INT, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+			bool flag = computeOverlap(sa, sb, ea, eb, overlap_a, overlap_b);
+			if(flag == false)
+			{
+				// 如果没有交集，跳过这个轮次
+				std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " No overlap in round [ " << u << " ]" << std::endl;
+				u++;
+				//obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
+				arae_a = ra; area_b = rb;
+				continue;
+			}
+			std::cout << "[======] PID " << Processor_ID << " u " << u << " sa sb [ " 
+			<< sa.x << " " << sa.y << " , " << sb.x << " " << sb.y << " ] ea eb [ "
+			<< ea.x << " " << ea.y << " , " << eb.x << " " << eb.y << " ] oa ob [ "
+			<< overlap_a.x << " " << overlap_a.y << " , " << overlap_b.x << " " << overlap_b.y << " ] "
+			<< std::endl;
 			
-						
-			oa.x = recvOverlapInfo[0]; oa.y = recvOverlapInfo[1];
-			ob.x = recvOverlapInfo[2]; ob.y = recvOverlapInfo[3];
-			std::cout << "finished ========================= recv 1\n";
+			if(flag == false)
+			{
+				sa = overlap_a; sb = overlap_b;
+				int overlapInfo[4] = {overlap_a.x, overlap_a.y, overlap_b.x, overlap_b.y};
+				int recvOverlapInfo[4];
+				MPI_Sendrecv(overlapInfo, 4, MPI_INT, this->plan[u].pid, this->Processor_ID,
+							recvOverlapInfo, 4, MPI_INT, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+				
+							
+				oa.x = recvOverlapInfo[0]; oa.y = recvOverlapInfo[1];
+				ob.x = recvOverlapInfo[2]; ob.y = recvOverlapInfo[3];
+				std::cout << "finished ========================= recv 1\n";
+			}
+			else
+			{
+				oa.x = ra.x; oa.y = ra.y;
+				ob.x = rb.x; ob.y = rb.y;
+			}
 		}
 		else
 		{
 			oa.x = ra.x; oa.y = ra.y;
 			ob.x = rb.x; ob.y = rb.y;
 		}
+		
 
 		// this->loadColorBuffer(sa, sb);
 		this->loadColorBufferRRGGBB(sa, sb); // sbuffer rrggbb 格式
@@ -841,8 +850,10 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			//Utils::convertRRRGGGBBBtoRGB(decompressedData, recv_nbEle, tmp_buffer);
 			tmpRecvCound = recv_nbEle;
 			
-			obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
-
+			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
+			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
+			arae_a = ra; area_b = rb;
+			
 			this->compositngColorRRGGBB(u, decompressedData);
 			//计算实际误差
 
