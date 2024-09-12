@@ -718,10 +718,17 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 
 void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression)
 {
+	bool bEffectiveArea = true;
+
 	this->plan = new Plan[kdTree->depth];
 	float3 view_dir = camera->to - camera->from;
 	createPlan(Processor_ID, kdTree->depth, kdTree->root, view_dir, plan);
 	obr_rgb = img_color;
+
+	Point2Di ea; ea.x = MinX; ea.y = MinY;
+	Point2Di eb; eb.x = MaxX; eb.y = MaxY;
+	Point2Di overlap_a; 
+	Point2Di overlap_b;
 
 	// 统计时间
 	double compress_time = 0.0;
@@ -733,6 +740,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	int u = 0;					// 当前二叉交换的层次
 	Point2Di sa, sb;			// 要发送的子图像的起始和结束位置
 	Point2Di ra, rb;			// 要接收的子图像的起始和结束位置
+	Point2Di oa, ob;
 	float total_error = 0.005f;
 	float process_error = total_error * 0.6f;
 	float gather_error = process_error * 0.4f;
@@ -746,8 +754,45 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
 		double start_round_time = MPI_Wtime();
+		this->setDimensions(u, arae_a, area_b, sa, sb, ra, rb);
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
+		// this->setDimensions(u, arae_a, arae_a, sa, sb, ra, rb);
 		// 填充缓冲区
+		bool flag = computeOverlap(sa, sb, ea, eb, overlap_a, overlap_b);
+		if(flag == false)
+		{
+			// 如果没有交集，跳过这个轮次
+			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " No overlap in round [ " << u << " ]" << std::endl;
+			u++;
+			//obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
+			arae_a = ra; area_b = rb;
+			continue;
+		}
+		std::cout << "[======] PID " << Processor_ID << " u " << u << " sa sb [ " 
+		<< sa.x << " " << sa.y << " , " << sb.x << " " << sb.y << " ] ea eb [ "
+		<< ea.x << " " << ea.y << " , " << eb.x << " " << eb.y << " ] oa ob [ "
+		<< overlap_a.x << " " << overlap_a.y << " , " << overlap_b.x << " " << overlap_b.y << " ] "
+		<< std::endl;
+		
+		if(flag == false)
+		{
+			sa = overlap_a; sb = overlap_b;
+			int overlapInfo[4] = {overlap_a.x, overlap_a.y, overlap_b.x, overlap_b.y};
+			int recvOverlapInfo[4];
+			MPI_Sendrecv(overlapInfo, 4, MPI_INT, this->plan[u].pid, this->Processor_ID,
+						recvOverlapInfo, 4, MPI_INT, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+			
+						
+			oa.x = recvOverlapInfo[0]; oa.y = recvOverlapInfo[1];
+			ob.x = recvOverlapInfo[2]; ob.y = recvOverlapInfo[3];
+			std::cout << "finished ========================= recv 1\n";
+		}
+		else
+		{
+			oa.x = ra.x; oa.y = ra.y;
+			ob.x = rb.x; ob.y = rb.y;
+		}
+
 		// this->loadColorBuffer(sa, sb);
 		this->loadColorBufferRRGGBB(sa, sb); // sbuffer rrggbb 格式
 		if(bUseCompression)
@@ -813,7 +858,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		{
 			// 计算发送和接收的大小
 			int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
-			int recvcount = (std::abs(ra.x - rb.x) + 1) * (std::abs(ra.y - rb.y) + 1) * 3;
+			int recvcount = (std::abs(oa.x - ob.x) + 1) * (std::abs(oa.y - ob.y) + 1) * 3;
 			// 发送和接收
 			MPI_Sendrecv(&rgb_sbuffer[0], sendcount, MPI_FLOAT, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
 				  		 &rgb_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
@@ -822,8 +867,8 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			totalSentBytes += sendcount * sizeof(float);
 			totalReceivedBytes += recvcount * sizeof(float);
 
-			obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
-		
+			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
+			arae_a = ra; area_b = rb;
 			this->compositngColorRRGGBB(u);
 		}
 		
@@ -840,10 +885,15 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	}
 
 
+
 	// part II final image gathering
 	// 计算缓冲区大小
+	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
+	obr_rgb_b.x = area_b.x; obr_rgb_b.y = area_b.y;
 	int sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
 	int sendHeight = std::abs(obr_rgb_b.y - obr_rgb_a.y) + 1;
+	// int sendWidth = std::abs(area_b.x - arae_a.x) + 1;
+	// int sendHeight = std::abs(area_b.y - arae_a.y) + 1;
 	int bufsize = sendWidth * sendHeight * 3;
 	bufsize += 4;
 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
@@ -1054,7 +1104,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	
 	}
 		
-		
+	
 	
 /*
 	// R, G, B 通道在 obr_rgb 中的起始偏移量
@@ -1983,6 +2033,9 @@ void Processor::initImage(int w, int h)
 	obr_a.x = 0; obr_a.y = 0;
 	obr_b.x = obr_x - 1; obr_b.y = obr_y - 1;
 
+	arae_a.x = 0; arae_a.y = 0;
+	area_b.x = obr_x - 1; area_b.y = obr_y - 1;
+
 	obr_alpha_a.x = 0; obr_alpha_a.y = 0;
 	obr_alpha_b.x = obr_x - 1; obr_alpha_b.y = obr_y - 1;
 
@@ -2215,4 +2268,18 @@ void Processor::initOpti()
 
 	initCamera(rozm_x, rozm_y, rozm_z);
 	setRatioUV();
+}
+
+bool Processor::computeOverlap(const Point2Di& sa, const Point2Di& sb, const Point2Di& ea, const Point2Di& eb, Point2Di& overlap_a, Point2Di& overlap_b)
+{
+	overlap_a.x = std::max(sa.x, ea.x);
+    overlap_a.y = std::max(sa.y, ea.y);
+    overlap_b.x = std::min(sb.x, eb.x);
+    overlap_b.y = std::min(sb.y, eb.y);
+    
+    // 如果没有交集
+    if (overlap_a.x > overlap_b.x || overlap_a.y > overlap_b.y) {
+        return false;
+    }
+    return true;
 }

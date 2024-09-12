@@ -50,6 +50,7 @@ public:
 	Plan* plan;
 	
 	Point2Di obr_a, obr_b;			// 要发送数据的起始点和终止点（图像上）
+	Point2Di arae_a, area_b;
 	Point2Di obr_alpha_a, obr_alpha_b;
 	Point2Di obr_rgb_a, obr_rgb_b;
 	int obr_x, obr_y;				//图像尺寸
@@ -146,7 +147,7 @@ private:
 	void compositngColorRRGGBB(const int u, float* buffer);
 	void reset();
 	bool read_data(const std::string& s, float3& a, float3& b, cudaExtent volumeTotalSize);
-	
+	bool computeOverlap(const Point2Di& sa, const Point2Di& sb, const Point2Di& ea, const Point2Di& eb, Point2Di& overlap_a, Point2Di& overlap_b);
 };
 
 
