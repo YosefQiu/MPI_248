@@ -126,7 +126,7 @@ public:
 public:
 	void setRatioUV();
 	void setCamera();
-	void setCameraProperty(float cam_dx, float cam_dy, std::optional<float> cam_vz = std::nullopt);
+	void setCameraProperty(float cam_dx, float cam_dy/*, std::optional<float> cam_vz = std::nullopt*/);
 private:
 	void initCamera(int rozm_x, int rozm_y, int rozm_z);
 	void updateCamera(int rozm_x, int rozm_y, int rozm_z);

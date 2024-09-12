@@ -733,7 +733,9 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	int u = 0;					// 当前二叉交换的层次
 	Point2Di sa, sb;			// 要发送的子图像的起始和结束位置
 	Point2Di ra, rb;			// 要接收的子图像的起始和结束位置
-	float process_error = 0.005f;
+	float total_error = 0.005f;
+	float process_error = total_error * 0.6f;
+	float gather_error = process_error * 0.4f;
 	float remaining_error = process_error;  // 剩余的误差限度
 	// Way 1
 	float errorBound = process_error / kdTree->depth;
@@ -880,42 +882,179 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	// 进程 0 分配接收缓冲区
 	float* recvbuf = nullptr;
 	if (Processor_ID == 0) {
+		
 		recvbuf = new float[Processor_Size * bufsize]; // 接收所有进程数据的缓冲区
 	}
+	if (bUseCompression == false)
+	{
+		// 所有进程调用 MPI_Gather，将 fbuffer 发送给进程 0
+		MPI_Gather(fbuffer, bufsize, MPI_FLOAT, recvbuf, bufsize, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-	// 所有进程调用 MPI_Gather，将 fbuffer 发送给进程 0
-	MPI_Gather(fbuffer, bufsize, MPI_FLOAT, recvbuf, bufsize, MPI_FLOAT, 0, MPI_COMM_WORLD);
+		// 进程 0 收集数据后处理
+		if (Processor_ID == 0)
+		{
+			for (int p = 0; p < Processor_Size; p++) 
+			{
+				int offset = p * bufsize;
+				Point2Di fa, fb;
+				fa.x = static_cast<int>(recvbuf[offset + 0]);
+				fa.y = static_cast<int>(recvbuf[offset + 1]);
+				fb.x = static_cast<int>(recvbuf[offset + 2]);
+				fb.y = static_cast<int>(recvbuf[offset + 3]);
 
-	// 进程 0 收集数据后处理
-	if (Processor_ID == 0) {
-		for (int p = 0; p < Processor_Size; p++) {
-			int offset = p * bufsize;
-			Point2Di fa, fb;
-			fa.x = static_cast<int>(recvbuf[offset + 0]);
-			fa.y = static_cast<int>(recvbuf[offset + 1]);
-			fb.x = static_cast<int>(recvbuf[offset + 2]);
-			fb.y = static_cast<int>(recvbuf[offset + 3]);
+				int index = 4;
+				for (int j = fa.y; j <= fb.y; j++) {
+					for (int i = fa.x; i <= fb.x; i++) {
+						int pixelIndex = (j * obr_x + i) * 1;
 
-			int index = 4;
-			for (int j = fa.y; j <= fb.y; j++) {
-				for (int i = fa.x; i <= fb.x; i++) {
-					int pixelIndex = (j * obr_x + i) * 1;
+						float r = recvbuf[offset + index++];
+						float g = recvbuf[offset + index++];
+						float b = recvbuf[offset + index++];
 
-					float r = recvbuf[offset + index++];
-					float g = recvbuf[offset + index++];
-					float b = recvbuf[offset + index++];
-
-					obr_rgb[rOffset_obr + pixelIndex] = r;
-					obr_rgb[gOffset_obr + pixelIndex] = g;
-					obr_rgb[bOffset_obr + pixelIndex] = b;
+						obr_rgb[rOffset_obr + pixelIndex] = r;
+						obr_rgb[gOffset_obr + pixelIndex] = g;
+						obr_rgb[bOffset_obr + pixelIndex] = b;
+					}
 				}
 			}
+			
 		}
+		// 清理资源
+		if (fbuffer) { delete[] fbuffer; }
+		if (recvbuf) { delete[] recvbuf; }
 	}
+	else if(bUseCompression == true)
+	{
+		// 压缩数据
+		size_t outSize;
+		size_t nbEle = bufsize - 4;
+		unsigned char* compressedData = SZx_fast_compress_args(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, fbuffer + 4, &outSize, REL, gather_error, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
 
-	// 清理资源
-	if (fbuffer) { delete[] fbuffer; }
-	if (recvbuf) { delete[] recvbuf; }
+		// 定义 MetaData 结构体
+		struct MetaData
+		{
+			int fa_x, fa_y, fb_x, fb_y;  // 数据范围
+			size_t outSize;              // 压缩后的大小
+			size_t nbEle;                // 原始数据元素个数
+		};
+
+		// 创建并发送元数据
+		MetaData meta = {static_cast<int>(obr_rgb_a.x), static_cast<int>(obr_rgb_a.y),
+						static_cast<int>(obr_rgb_b.x), static_cast<int>(obr_rgb_b.y), outSize, nbEle};
+
+		MetaData* recvMeta = nullptr;
+		if (Processor_ID == 0)
+		{
+			recvMeta = new MetaData[Processor_Size];  // 接收所有进程的元数据
+		}
+
+		// 使用 MPI_Gather 收集元数据
+		MPI_Gather(&meta, sizeof(MetaData), MPI_BYTE, recvMeta, sizeof(MetaData), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+		unsigned char* recvbuf_compressed = nullptr;
+		int* recvOutSizes = nullptr;
+		int* recvnbEleSize = nullptr;
+		int* displs = nullptr;
+		// 进程 0 处理元数据，准备进行 MPI_Gatherv
+		if (Processor_ID == 0)
+		{
+			// 处理元数据：提取每个进程的 outSize 和 nbEle，并计算总的接收大小
+			recvOutSizes = new int[Processor_Size];  // 每个进程的压缩数据大小 outSize
+			recvnbEleSize = new int[Processor_Size]; // 每个进程原始数据的元素个数 nbEle
+			displs = new int[Processor_Size];        // 偏移量
+
+			size_t totalCompressedSize = 0;
+			displs[0] = 0;  // 初始化第一个偏移量
+
+			// 处理元数据并计算总压缩大小和偏移量
+			for (int i = 0; i < Processor_Size; i++)
+			{
+				recvOutSizes[i] = static_cast<int>(recvMeta[i].outSize);
+				recvnbEleSize[i] = static_cast<int>(recvMeta[i].nbEle);
+				totalCompressedSize += recvOutSizes[i];  // 计算所有压缩数据的总大小
+
+				if (i > 0)
+				{
+					displs[i] = displs[i - 1] + recvOutSizes[i - 1];
+				}
+				std::cout << "[DOTEST===] " << i << " outSize " << recvOutSizes[i] << " nbELeSize " << recvnbEleSize[i] << std::endl;
+			}
+
+			// 为进程 0 分配接收压缩数据的缓冲区
+			recvbuf_compressed = new unsigned char[totalCompressedSize];
+		}
+
+		// 使用 MPI_Gatherv 收集压缩数据
+		// std::cout << "[==========================] before" << std::endl;
+		MPI_Gatherv(compressedData, static_cast<int>(outSize), MPI_UNSIGNED_CHAR, recvbuf_compressed, recvOutSizes, displs, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+		// std::cout << "[==========================] after" << std::endl;
+		if(Processor_ID == 0)
+		{
+			// 进程 0 解压和合成数据
+			for (int p = 1; p < Processor_Size; p++)
+			{
+				// 获取压缩数据和元素个数
+				unsigned char* recvCompressedData = recvbuf_compressed + displs[p];
+				size_t recv_outSize = static_cast<size_t>(recvOutSizes[p]);
+				size_t recv_nbEle = static_cast<size_t>(recvnbEleSize[p]);
+
+				// 打印调试信息，确保 recvCompressedData 和 recvOutSizes 正确
+				std::cout << "[Process " << p << "] Compressed data size: " << recvOutSizes[p] 
+						<< ", Element count: " << recv_nbEle << std::endl;
+
+				// 检查recvCompressedData 和 recvOutSizes[p] 是否有效
+				if (recvCompressedData == nullptr || recvOutSizes[p] == 0) {
+					std::cerr << "Error: Invalid compressed data or size for process " << p << std::endl;
+					continue; // 跳过错误的进程
+				}
+
+				// 解压每个进程的数据
+				std::cout << "[2222222]:: " << p << "before decompress" << std::endl;
+				float* decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, recvCompressedData, recv_outSize, 0, 0, 0, 0, recv_nbEle);
+				std::cout << "[2222222]:: " << p << "finished decompress" << std::endl;
+				// 使用解压后的数据处理 RGB 数据
+				MetaData& meta = recvMeta[p];
+				Point2Di fa, fb;
+				fa.x = meta.fa_x;
+				fa.y = meta.fa_y;
+				fb.x = meta.fb_x;
+				fb.y = meta.fb_y;
+
+				int index = 0;  // 解压后的数据从第0项开始
+				for (int j = fa.y; j <= fb.y; j++)
+				{
+					for (int i = fa.x; i <= fb.x; i++)
+					{
+						int pixelIndex = (j * obr_x + i) * 1;
+						float r = decompressedData[index++];
+						float g = decompressedData[index++];
+						float b = decompressedData[index++];
+
+						// 将解压后的 R, G, B 数据存储到 obr_rgb 中
+						obr_rgb[rOffset_obr + pixelIndex] = r;
+						obr_rgb[gOffset_obr + pixelIndex] = g;
+						obr_rgb[bOffset_obr + pixelIndex] = b;
+					}
+				}
+
+				// 清理解压后的数据
+				delete[] decompressedData;
+			}
+
+			// 清理内存
+			delete[] recvOutSizes;
+			delete[] recvnbEleSize;
+			delete[] displs;
+			delete[] recvbuf_compressed;
+			delete[] recvMeta;
+		}
+
+		// 清理压缩数据
+		delete[] compressedData;
+	
+	}
+		
+		
 	
 /*
 	// R, G, B 通道在 obr_rgb 中的起始偏移量
@@ -1817,14 +1956,14 @@ void Processor::setCamera()
 	camera = new Camera(camPos, cameraLookAt, cameraWorldUp, 1.0f, 0.3f, 30.0f);
 }
 
-void Processor::setCameraProperty(float cam_dx, float cam_dy, std::optional<float> cam_vz)
+void Processor::setCameraProperty(float cam_dx, float cam_dy/*, std::optional<float> cam_vz*/)
 {
 	this->cam_dx = cam_dx;
 	this->cam_dy = cam_dy;
-	if (cam_vz.has_value())
-	{
-		this->cam_vz = cam_vz.value();
-	}
+	// if (cam_vz.has_value())
+	// {
+	// 	this->cam_vz = cam_vz.value();
+	// }
 
 	float rozm_x = this->kdTree->root->b.x - this->kdTree->root->a.x + 1;
 	float rozm_y = this->kdTree->root->b.y - this->kdTree->root->a.y + 1;
