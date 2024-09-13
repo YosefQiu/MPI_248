@@ -1,59 +1,26 @@
-process_count: 2
-CUDA_DVR: 1.6936650000000002
-alpha_swap: 3.419995
-rgb_swap: 21.9698
-    round1: 1.69367 1.46886 4.12827
+process_count: 2 C F
+CUDA_DVR: 1.6904949999999999
+alpha_swap: 4.16641
+rgb_swap: 29.21395
+    round1: 2.13301 1.37342 4.63455
+    
 
-process_count: 2 No Compression
-CUDA_DVR: 2.233395
-alpha_swap: 3.34743
-rgb_swap: 27.688699999999997
-    round1: 0.0 0.0 3.66029
+process_count: 2 C E
+CUDA_DVR: 1.72389
+alpha_swap: 4.279925
+rgb_swap: 22.4451
+    round1: 1.57666 1.37180 6.35406
 
-process_count: 4
-CUDA_DVR: 1.47366
-alpha_swap: 4.1434
-rgb_swap: 37.2147
-    round1: 1.41145 1.38945 4.16227
-    round2: 2.26569 2.25874 6.67368
 
-process_count: 4 No Compression
-CUDA_DVR: 1.9146225000000001
-alpha_swap: 4.044485
-rgb_swap: 43.08369999999999
-    round1: 0.0 0.0 3.73813
-    round2: 0.0 0.0 5.06493
+process_count: 2 NC F
+CUDA_DVR: 3.9354875
+alpha_swap: 4.171745
+rgb_swap: 14.78035
+    round1: 0 0 2.84220
 
-process_count: 8
-CUDA_DVR: 1.09189675
-alpha_swap: 5.782860833333333
-rgb_swap: 53.425718749999994
-    round1: 0.93385 1.10806 3.79538
-    round2: 1.43919 1.73534 5.93459
-    round3: 2.09198 2.15635 7.27623
+process_count: 2 NC E
+CUDA_DVR: 2.7878425
+alpha_swap: 4.1190375
+rgb_swap: 21.87705
+    round1: 0 0 0.57423
 
-process_count: 8 No Compression
-CUDA_DVR: 1.144345
-alpha_swap: 5.79656625
-rgb_swap: 54.48276249999999
-    round1: 0.0 0.0 5.19531
-    round2: 0.0 0.0 7.21751
-    round3: 0.0 0.0 7.89868
-
-process_count: 16
-CUDA_DVR: 0.9204921249999999
-alpha_swap: 7.0216325
-rgb_swap: 89.34240625
-    round1: 1.05245 1.21020 4.77144
-    round2: 1.60035 1.79627 7.36427
-    round3: 2.13368 2.17703 8.87666
-    round4: 2.41220 2.39503 9.91477
-
-process_count: 16 No Compression
-CUDA_DVR: 0.82357375
-alpha_swap: 7.143868125
-rgb_swap: 191.40925
-    round1: 0.0 0.0 3.25544
-    round2: 0.0 0.0 5.22020
-    round3: 0.0 0.0 6.46275
-    round4: 0.0 0.0 10.12064

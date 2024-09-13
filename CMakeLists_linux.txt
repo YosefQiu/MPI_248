@@ -5,7 +5,7 @@ project(CUDA_MPI LANGUAGES CXX CUDA)
 set(CMAKE_CUDA_ARCHITECTURES 80)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 设置编译选项
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CUDA_STANDARD 17)
 
 # 设置 include 目录
@@ -30,7 +30,7 @@ include_directories(Common)
 
 # Add cusz szx
 include_directories("~/third_bin/include/szx")
-#include_directories("~/third_bin/include/cusz")
+include_directories("~/third_bin/include/cusz")
 link_directories("~/third_lib")
 link_directories("~/third_lib")
 
@@ -62,19 +62,26 @@ add_executable(${PROJECT_NAME}
 	${RESOURCE_FILES})
 
 # 查找并链接 CUSZ 和 SZX 库
-#find_library(CUSZ_LIB cusz HINTS "~/third_lib")
+find_library(CUSZ_LIB cusz HINTS "~/third_lib")
 find_library(SZX_LIB SZx HINTS "~/third_lib")
 
 
+## 链接 CUDA 和 MPI 库
+#target_include_directories(${PROJECT_NAME} PRIVATE ${MPI_INCLUDE_PATH})
+#target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES} cuda stdc++ ${CUSZ_LIB} ${SZX_LIB})
+#
+## 设置 CUDA 的编译选项
+#set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+#set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -I${MPI_INCLUDE_PATH}")
 
 # 链接 CUDA 和 MPI 库
 target_include_directories(${PROJECT_NAME} PRIVATE /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/include)
-target_link_libraries(${PROJECT_NAME} /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/lib/libmpi.so cuda stdc++  ${SZX_LIB} OpenMP::OpenMP_CXX)
+target_link_libraries(${PROJECT_NAME} /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/lib/libmpi.so cuda stdc++ ${CUSZ_LIB} ${SZX_LIB} OpenMP::OpenMP_CXX)
 
 # 设置 CUDA 的编译选项
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -I/opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/include")
 set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 
-## 指定 MPI 编译器
-#set(CMAKE_C_COMPILER /opt/cray/pe/craype/2.7.30/bin/cc)
-#set(CMAKE_CXX_COMPILER /opt/cray/pe/craype/2.7.30/bin/cc)
+# 指定 MPI 编译器
+set(CMAKE_C_COMPILER /opt/cray/pe/craype/2.7.30/bin/cc)
+set(CMAKE_CXX_COMPILER /opt/cray/pe/craype/2.7.30/bin/cc)

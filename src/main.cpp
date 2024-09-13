@@ -236,8 +236,8 @@ int main(int argc, char* argv[])
 	// 同步所有进程，确保每个进程都在同一个时刻开始计时
 	MPI_Barrier(MPI_COMM_WORLD);
 	double start_time = MPI_Wtime(); // 开始计时
-	//p->binarySwap_Alpha_GPU(d_output_alpha);
-	p->binarySwap_Alpha(h_alpha);
+	p->binarySwap_Alpha_GPU(d_output_alpha);
+	//p->binarySwap_Alpha(h_alpha);
 	float global_error_bounded = 1E-2;
 	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
 	int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
@@ -285,8 +285,8 @@ int main(int argc, char* argv[])
 	
 	MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
 	double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
-	p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
-	//p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress);
+	//p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
+	p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
 	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 	double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
 	double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
