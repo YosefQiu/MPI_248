@@ -94,17 +94,17 @@ int main(int argc, char* argv[])
 	findCudaDevice(argc, (const char**)argv);
 	
 	CudaKernel cudakernel;
-	// int gpu_count;
-    // cudaGetDeviceCount(&gpu_count);
-    // // 映射每个进程到特定的 GPU（在本地节点上）
-    // int gpu_id = p->Processor_ID % gpu_count;
-    // cudaSetDevice(gpu_id);
+	int gpu_count;
+    cudaGetDeviceCount(&gpu_count);
+    // 映射每个进程到特定的 GPU（在本地节点上）
+    int gpu_id = p->Processor_ID % gpu_count;
+    cudaSetDevice(gpu_id);
 
-    // int device_id;
-    // cudaGetDevice(&device_id);
-	// std::cout << "Process " << p->Processor_ID 
-	// 	<< " is using GPU " << device_id << " / " << gpu_count 
-	// 	<< " on " << hostname << std::endl;
+    int device_id;
+    cudaGetDevice(&device_id);
+	std::cout << "Process " << p->Processor_ID 
+		<< " is using GPU " << device_id << " / " << gpu_count 
+		<< " on " << hostname << std::endl;
 
 	p->initScreen(image_width, image_height);
 	p->initRayCaster(p->camera_plane_x, p->camera_plane_y);
@@ -190,8 +190,6 @@ int main(int argc, char* argv[])
 	// Check for kernel errors
 	getLastCudaError("Kernel failed");
 
-
-	
 	// 拷贝RGB/ALPHA数据到主机
 	float* h_rgb = new float[image_width * image_height * 3];
 	float* h_alpha = new float[image_width * image_height * 1];
@@ -232,67 +230,62 @@ int main(int argc, char* argv[])
 	delete[] h_img_uc2; h_img_uc2 = nullptr;
 	// delete[] tmp_rgb; tmp_rgb = nullptr;
 
-
-	// 同步所有进程，确保每个进程都在同一个时刻开始计时
-	MPI_Barrier(MPI_COMM_WORLD);
-	double start_time = MPI_Wtime(); // 开始计时
-	p->binarySwap_Alpha_GPU(d_output_alpha);
-	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
-	double end_time = MPI_Wtime(); // 结束计时
-	double elapsed_time = end_time - start_time;
-	elapsed_time *= 1000.0;
-	Utils::recordCudaRenderTime("./alpha_change_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time);
-
-	p->AlphaGathering_CPU();
-	//p->binarySwap_Alpha(h_alpha);
-	float global_error_bounded = 1E-2;
-	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
-	int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
-	float* error_array = new float[range_w * range_h];
-	if (p->Processor_Size == 2 || p->Processor_Size == 4)
+	if(usecomress == true)
 	{
-		for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
+
+		
+		p->binarySwap_Alpha_GPU(d_output_alpha);
+		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
+		
+
+		p->AlphaGathering_CPU();
+		//p->binarySwap_Alpha(h_alpha);
+		float global_error_bounded = 1E-2;
+		int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
+		int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
+		float* error_array = new float[range_w * range_h];
+		if (p->Processor_Size == 2 || p->Processor_Size == 4)
 		{
-			for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
+			for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
 			{
-				auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
-				auto tmp_error = global_error_bounded / (1 + p_alpha);
-				error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
+				for (auto width_idx = h_minMaxXY[0]; width_idx <= h_minMaxXY[2]; ++width_idx)
+				{
+					auto p_alpha = p->obr_alpha[hight_idx * image_width + width_idx];
+					auto tmp_error = global_error_bounded / (1 + p_alpha);
+					error_array[(hight_idx - h_minMaxXY[1]) * range_w + (width_idx - h_minMaxXY[0])] = tmp_error;
+				}
 			}
+		
+			// 找到error_array中的最大值
+			float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
+			float max_error = *max_error_ptr;
+			std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
 		}
-	
-		// 找到error_array中的最大值
-		float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
-		float max_error = *max_error_ptr;
-		std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
+
+
+
+		MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
+		double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
+		//p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
+		p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
+		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
+		double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
+		double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
+		Utils::recordCudaRenderTime("./binarySwap_RGB_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time_swap);
+		delete[] error_array;
+		error_array = nullptr;
 	}
-
-	// // TODO test d_alpha_valus_ u to cpu p->alpha_value_u
-	// int value_size = p->kdTree->depth * p->obr_x * p->obr_y;
-	// float* tmp_u = new float[value_size];
-	// cudaMemcpy(tmp_u, p->d_alpha_values_u, value_size * sizeof(float), cudaMemcpyDeviceToHost);
-	// int idx = 0;
-	// for (int u = 0; u < p->kdTree->depth; ++u) 
-	// {
-	// 	for (int y = 0; y < p->obr_y; ++y) 
-	// 	{
-	// 		 for (int x = 0; x < p->obr_x; ++x) 
-	// 		{
-	// 			p->alpha_values_u[u][y][x] = tmp_u[idx++];  // 从 tmp_u 中提取值并赋给 alpha_values_u[u][y][x]
-	// 		}
-	// 	}
-	// }
-
-	
-	
-	MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
-	double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
-	//p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
-	p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
-	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
-	double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
-	double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
-	Utils::recordCudaRenderTime("./binarySwap_RGB_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time_swap);
+	else if(usecomress == false)
+	{
+		MPI_Barrier(MPI_COMM_WORLD);
+		double start_time = MPI_Wtime(); // 开始计时
+		p->binarySwap(h_rgb, h_alpha);
+		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
+		double end_time = MPI_Wtime(); // 结束计时
+		double elapsed_time = end_time - start_time;
+		elapsed_time *= 1000.0;
+		Utils::recordCudaRenderTime("./noCom.txt", p->Processor_Size, p->Processor_ID, elapsed_time);
+	}
 	
 	
 	// 计算通信量
@@ -310,12 +303,11 @@ int main(int argc, char* argv[])
                   << " Total ALPHA Bytes: " << alpha_totalReceivedBytesAllProcesses << std::endl;			
     }
   
-	//delete[] error_array;
-	//error_array = nullptr;
+	
 
 
 	// 保存最终结果
-	if (p->Processor_ID == 0 && p->kdTree->depth != 0)
+	if (p->Processor_ID == 0 && p->kdTree->depth != 0 && usecomress == true)
 	{
 		//float* result_alpha = new float[image_width * image_height];
 		//cudaMemcpy(result_alpha, p->d_obr_alpha, image_width * image_height * sizeof(float), cudaMemcpyDeviceToHost);
@@ -339,23 +331,33 @@ int main(int argc, char* argv[])
 		delete[] obr_rgba; obr_rgba = nullptr;
 
 	}
+	else if((p->Processor_ID == 0 && p->kdTree->depth != 0 && usecomress == false))
+	{
+		unsigned char* h_img_uc = new unsigned char[image_width * image_height * 4];
+		for (int i = 0; i < image_width * image_height * 4; ++i) {
+			h_img_uc[i] = static_cast<unsigned char>(p->obr[i] * 255.0f);
+		}
+		sprintf(outputFilename, "output_%d.png", size);
+		stbi_write_png(outputFilename, image_width, image_height, 4, h_img_uc, image_width * 4);
 
-
-
-	delete[] h_alpha;
-	delete[] h_rgb;
-
-	cudaFree(d_output_rgb);
-	cudaFree(d_output_alpha);
+		// 生成output 的二进制
+		sprintf(outputFilename, "output_%d.bin", size);
+		Utils::saveArrayAsBinary(outputFilename, p->obr, image_width, image_height);
+		std::cout << "finished FIIIIIIIIIIII\n";
+		delete[] h_img_uc; h_img_uc = nullptr;
+	}
 
 	
+	delete[] h_alpha;
+	delete[] h_rgb;
+	cudaFree(d_output_rgb);
+	cudaFree(d_output_alpha);
 
 	if (p->Processor_Size == 1)
 		system("pause");
 	if (p) { delete p; p = NULL; }
 
 
-	
 	err = MPI_Finalize();
 	if (err != MPI_SUCCESS)
 	{
