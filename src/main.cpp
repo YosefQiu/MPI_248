@@ -237,6 +237,13 @@ int main(int argc, char* argv[])
 	MPI_Barrier(MPI_COMM_WORLD);
 	double start_time = MPI_Wtime(); // 开始计时
 	p->binarySwap_Alpha_GPU(d_output_alpha);
+	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
+	double end_time = MPI_Wtime(); // 结束计时
+	double elapsed_time = end_time - start_time;
+	elapsed_time *= 1000.0;
+	Utils::recordCudaRenderTime("./alpha_change_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time);
+
+	p->AlphaGathering_CPU();
 	//p->binarySwap_Alpha(h_alpha);
 	float global_error_bounded = 1E-2;
 	int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
@@ -276,12 +283,7 @@ int main(int argc, char* argv[])
 	// 	}
 	// }
 
-	MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
-	double end_time = MPI_Wtime(); // 结束计时
-	double elapsed_time = end_time - start_time;
-	elapsed_time *= 1000.0;
-	Utils::recordCudaRenderTime("./alpha_change_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time);
-
+	
 	
 	MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
 	double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
@@ -291,6 +293,7 @@ int main(int argc, char* argv[])
 	double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
 	double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
 	Utils::recordCudaRenderTime("./binarySwap_RGB_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time_swap);
+	
 	
 	// 计算通信量
 	size_t totalSentBytesAllProcesses = 0;

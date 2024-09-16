@@ -124,6 +124,7 @@ public:
 	void binarySwap_RGB(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true, bool bUseArea = true);
 	void binarySwap_Alpha_GPU(float* d_imgAlpha);
 	void binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true, bool bUseArea = true);
+	void AlphaGathering_CPU();
 public:
 	void setRatioUV();
 	void setCamera();
@@ -149,6 +150,8 @@ private:
 	bool read_data(const std::string& s, float3& a, float3& b, cudaExtent volumeTotalSize);
 	bool computeOverlap(const Point2Di& sa, const Point2Di& sb, const Point2Di& ea, const Point2Di& eb, Point2Di& overlap_a, Point2Di& overlap_b);
 };
+
+
 
 
 
