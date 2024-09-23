@@ -81,7 +81,16 @@ public:
 	// AABB
 	float3 bMin;
 	float3 bMax;
-	
+public:
+	// for compression
+	size_t outSize = 0; 
+	size_t nbEle;
+	size_t pad_nbEle;
+	int blockSize = 64;
+	unsigned char* d_cmpBytes;
+	float* d_decData;
+	float* d_paddedData;
+	cudaStream_t stream;
 public:
 	unsigned char* data = nullptr;
 	unsigned char* data2 = nullptr;

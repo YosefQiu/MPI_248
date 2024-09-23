@@ -1,0 +1,1 @@
+srun --export=ALL --ntasks=16 --ntasks-per-node=4 --gpus-per-node=4 --gpu-bind=closest ./CUDA_MPI /pscratch/sd/q/qiuyf/perlin_noise_data_1024.raw 1024 1024 1024 8192 8192 1.0 1.0 0.6 1 0

@@ -92,19 +92,22 @@ int main(int argc, char* argv[])
     gethostname(hostname, sizeof(hostname));  // 获取主机名
 	// 先获取节点上可用的 GPU 数量
 	findCudaDevice(argc, (const char**)argv);
-	
 	CudaKernel cudakernel;
-	int gpu_count;
-    cudaGetDeviceCount(&gpu_count);
-    // 映射每个进程到特定的 GPU（在本地节点上）
-    int gpu_id = p->Processor_ID % gpu_count;
-    cudaSetDevice(gpu_id);
 
-    int device_id;
-    cudaGetDevice(&device_id);
-	std::cout << "Process " << p->Processor_ID 
-		<< " is using GPU " << device_id << " / " << gpu_count 
-		<< " on " << hostname << std::endl;
+	//int gpu_count;
+    //cudaGetDeviceCount(&gpu_count);
+    // // 映射每个进程到特定的 GPU（在本地节点上）
+    // int gpu_id = p->Processor_ID % gpu_count;
+    // cudaSetDevice(gpu_id);
+
+    // int device_id;
+    // cudaGetDevice(&device_id);
+	// std::cout << "Process " << p->Processor_ID 
+	// 	<< " is using GPU " << device_id << " / " << gpu_count 
+	// 	<< " on " << hostname << std::endl;
+
+	std::cout << "Process " << p->Processor_ID << " on " << hostname << std::endl;
+
 
 	p->initScreen(image_width, image_height);
 	p->initRayCaster(p->camera_plane_x, p->camera_plane_y);
@@ -142,7 +145,7 @@ int main(int argc, char* argv[])
 	cudaMemcpy(d_minMaxXY, h_minMaxXY, 4 * sizeof(uint), cudaMemcpyHostToDevice);
 
 	// 初始化CUDA 用来做数据采样相关
-	cudaExtent initCuda_size = make_cudaExtent((p->data_b.x - p->data_a.x + 1), (p->data_b.y - p->data_a.y + 1), (p->data_b.z - p->data_a.z + 1));
+	cudaExtent initCuda_size = make_cudaExtent((p->data_b.x - p->data_a.x + 1), (p->data_b.y - p->data_a.y + 1), (p->data_b.z - p->data_a.z));
 	std::cout << "[init cuda size]:: PID [ " << p->Processor_ID << " ] [ " 
 		<< p->data_b.x - p->data_a.x + 1 << ", " 
 		<< p->data_b.y - p->data_a.y + 1 << " , " 
@@ -244,7 +247,7 @@ int main(int argc, char* argv[])
 		int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
 		int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
 		float* error_array = new float[range_w * range_h];
-		if (p->Processor_Size == 2 || p->Processor_Size == 4)
+		if (p->Processor_Size == 2 || p->Processor_Size == 4 || p->Processor_Size == 8 || p->Processor_Size == 16)
 		{
 			for (auto hight_idx = h_minMaxXY[1]; hight_idx <= h_minMaxXY[3]; ++hight_idx)
 			{
@@ -278,13 +281,13 @@ int main(int argc, char* argv[])
 	else if(usecomress == false)
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
-		double start_time = MPI_Wtime(); // 开始计时
+		double start_time1 = MPI_Wtime(); // 开始计时
 		p->binarySwap(h_rgb, h_alpha);
 		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
-		double end_time = MPI_Wtime(); // 结束计时
-		double elapsed_time = end_time - start_time;
-		elapsed_time *= 1000.0;
-		Utils::recordCudaRenderTime("./noCom.txt", p->Processor_Size, p->Processor_ID, elapsed_time);
+		double end_time1 = MPI_Wtime(); // 结束计时
+		double elapsed_time1 = end_time1 - start_time1;
+		elapsed_time1 *= 1000.0;
+		Utils::recordCudaRenderTime("./noCom.txt", p->Processor_Size, p->Processor_ID, elapsed_time1);
 	}
 	
 	

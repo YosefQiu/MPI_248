@@ -56,6 +56,11 @@
 #include "cuszx_entry.h"
 #include <unistd.h>
 
+//cuszp
+#include <cuSZp_utility.h>
+#include <cuSZp_entry_f32.h>
+#include <cuSZp_timer.h>
+
 #include <omp.h>
 
 extern struct timeval startTime;

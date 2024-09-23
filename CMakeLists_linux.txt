@@ -31,6 +31,7 @@ include_directories(Common)
 # Add cusz szx
 include_directories("~/third_bin/include/szx")
 include_directories("~/third_bin/include/cusz")
+include_directories("~/third_bin/include/cuSZp")
 link_directories("~/third_lib")
 link_directories("~/third_lib")
 
@@ -61,14 +62,17 @@ add_executable(${PROJECT_NAME}
     ${Common_UtilNPP_HEADER_FILES}
 	${RESOURCE_FILES})
 
-# 查找并链接 CUSZ 和 SZX 库
+# 查找并链接 CUSZ 和 SZX 和 CUSZP 库
 find_library(CUSZ_LIB cusz HINTS "~/third_lib")
+message(STATUS "CUSZ_LIB found at: ${CUSZ_LIB}")
 find_library(SZX_LIB SZx HINTS "~/third_lib")
-
+message(STATUS "SZX_LIB found at: ${SZX_LIB}")
+find_library(CUSZP_LIB NAMES cuSZp HINTS "~/third_bin/lib64")
+message(STATUS "CUSZP_LIB found at: ${CUSZP_LIB}")
 
 ## 链接 CUDA 和 MPI 库
 #target_include_directories(${PROJECT_NAME} PRIVATE ${MPI_INCLUDE_PATH})
-#target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES} cuda stdc++ ${CUSZ_LIB} ${SZX_LIB})
+#target_link_libraries(${PROJECT_NAME} ${MPI_LIBRARIES} cuda stdc++ ${CUSZ_LIB} ${SZX_LIB} ${CUSZP_LIB})
 #
 ## 设置 CUDA 的编译选项
 #set_target_properties(${PROJECT_NAME} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
@@ -76,7 +80,7 @@ find_library(SZX_LIB SZx HINTS "~/third_lib")
 
 # 链接 CUDA 和 MPI 库
 target_include_directories(${PROJECT_NAME} PRIVATE /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/include)
-target_link_libraries(${PROJECT_NAME} /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/lib/libmpi.so cuda stdc++ ${CUSZ_LIB} ${SZX_LIB} OpenMP::OpenMP_CXX)
+target_link_libraries(${PROJECT_NAME} /opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/lib/libmpi.so cuda stdc++ ${CUSZ_LIB} ${SZX_LIB} ${CUSZP_LIB} OpenMP::OpenMP_CXX)
 
 # 设置 CUDA 的编译选项
 set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -I/opt/cray/pe/mpich/8.1.28/ofi/gnu/12.3/include")

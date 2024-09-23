@@ -29,6 +29,9 @@ alpha_swap: 4.41968
 rgb_swap: 30.22333
     round1: 2.21373 1.42882 4.16660
     round2: 3.76284 2.34664 6.97194
+
+
+
     
 
 process_count: 4 NC F
@@ -37,3 +40,11 @@ alpha_swap: 4.37252
 rgb_swap: 35.46272
     round1: 0 0 0.63147
     round2: 0 0 1.04350
+
+
+2 : RGB Bytes: 643886 Total ALPHA Bytes: 1048576 压缩 全面积
+2 : RGB Bytes: 643886 Total ALPHA Bytes: 1048576 压缩 有效面积
+
+Total RGB Bytes: 172834333 Total ALPHA Bytes: 33554432 TOTAL:201326592
+Total RGB Bytes: 191405677 Total ALPHA Bytes: 100663296 TOTAL: 402653184
+Total RGB Bytes: 442401894 Total ALPHA Bytes: 201326592 TOTAL: 805306368

@@ -307,7 +307,7 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 		this->compositng(u);
 		u++;
 		std::cout << "[binarySwap]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
-
+		MPI_Barrier(MPI_COMM_WORLD);
 		double end_round_time = MPI_Wtime();
 		each_round_time += (end_round_time - start_round_time);
 		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
@@ -422,7 +422,7 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	double start_time_alpha = MPI_Wtime(); // 开始计时
-	// while (kdTree->depth != 0 && u < kdTree->depth)
+	
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
 		//std::cout << "[binarySwap_Alpha_GPU]:: PID " << Processor_ID << " Begin round [ " << u << " ] " << std::endl;
@@ -464,13 +464,14 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 		obr_alpha_a = ra; obr_alpha_b = rb;//更新图像起始和结束位置
 
 
-		alpha_totalSentBytes += sendcount * sizeof(float);
-		alpha_totalReceivedBytes += recvcount * sizeof(float);
+		//alpha_totalSentBytes += sendcount * sizeof(float);
+		//alpha_totalReceivedBytes += recvcount * sizeof(float);
 
 		
 		u++;
 		//std::cout << "[binarySwap_Alpha_GPU]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 	}
+	MPI_Barrier(MPI_COMM_WORLD);
 	double end_time_alpha = MPI_Wtime(); // 结束计时
 	double elapsed_time_alpha = end_time_alpha - start_time_alpha;
 	elapsed_time_alpha *= 1000.0;
@@ -1218,14 +1219,16 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 		int recvcount = (std::abs(oa.x - ob.x) + 1) * (std::abs(oa.y - ob.y) + 1) * 3;
 
-		cudaMalloc(&d_rgb_sbuffer, sendcount * sizeof(float));
-		cudaMalloc(&d_rgb_rbuffer, recvcount * sizeof(float));
+		// cudaMalloc(&d_rgb_sbuffer, sendcount * sizeof(float));
+		// cudaMalloc(&d_rgb_rbuffer, recvcount * sizeof(float));
 
 		// 填充缓冲区 // CUDA 内核
 		dim3 blockDim(16, 16);
 		dim3 gridDim((sb.x - sa.x + 1 + blockDim.x - 1) / blockDim.x, (sb.y - sa.y + 1 + blockDim.y - 1) / blockDim.y);
 		loadColorBufferRRGGBBKernel<<<gridDim, blockDim>>>(d_obr_rgb, d_rgb_sbuffer, sa, sb, obr_x, obr_y);
 		cudaDeviceSynchronize();
+
+		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished loadColorBufferRRGGBBKernel " << std::endl;
 
 		if(bUseCompression)
 		{
@@ -1235,19 +1238,23 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			// else if (u == 1) {
 			// 	errorBound = run_one;
 			// }
-			size_t outSize; 
-			size_t nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
-			//int blockSize = 64;
-
+			
+			
+			nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
+			pad_nbEle = (nbEle + 262144 - 1) / 262144 * 262144;
+			cudaMalloc((void**)&d_paddedData, sizeof(float) * pad_nbEle);
+			
 			double start_compress = MPI_Wtime();
-			// 先将数据拷贝到CPU
-			float* tmp_rgb_sbuffer = new float[nbEle];
-			cudaMemcpy(tmp_rgb_sbuffer, d_rgb_sbuffer, nbEle * sizeof(float), cudaMemcpyDeviceToHost);
-			unsigned char* bytes =  SZx_fast_compress_args(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, tmp_rgb_sbuffer, &outSize, REL, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
+			// 将原始的 d_rgb_sbuffer 拷贝到 d_paddedData 中
+			cudaMemcpy(d_paddedData, d_rgb_sbuffer, sizeof(float) * nbEle, cudaMemcpyDeviceToDevice);
+			cudaMalloc((void**)&d_cmpBytes, sizeof(unsigned char) * pad_nbEle); 
+
+			SZp_compress_deviceptr_f32(d_paddedData, d_cmpBytes, nbEle, &outSize, errorBound, stream);
 			double end_compress = MPI_Wtime();
+			
 			compress_time += (end_compress - start_compress);
 
-			
+
 			// // 解压缩需要 bytes, byteLength, nbEle 要用MPI发送
 			// // 先发送 byteLength 和 nbEle
 			// 先发送 byteLength 和 nbEle
@@ -1258,27 +1265,23 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 
 			size_t recv_byteLength = recvInfo[0];
 			size_t recv_nbEle = recvInfo[1];
+			
 			// 发送压缩的数据
-			unsigned char* receivedCompressedBytes = new unsigned char[recv_byteLength];
-			MPI_Sendrecv(bytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
+			unsigned char* receivedCompressedBytes;
+			cudaMalloc(&receivedCompressedBytes, recv_byteLength * sizeof(unsigned char));
+			cudaMalloc(&d_decData, recv_nbEle * sizeof(float));
+
+			MPI_Sendrecv(d_cmpBytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
 						 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
 
 			double start_decompress = MPI_Wtime();
+			SZp_decompress_deviceptr_f32(d_rgb_rbuffer, receivedCompressedBytes, recv_nbEle, recv_byteLength, errorBound, stream);
 			
-			float *decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
-			// 将decompressedData拷贝到GPU 的 d_rgb_rbuffer
-			cudaMemcpy(d_rgb_rbuffer, decompressedData, recv_nbEle * sizeof(float), cudaMemcpyHostToDevice);
 			double end_decompress = MPI_Wtime();
 			decompress_time += (end_decompress - start_decompress);
 			
-			// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " CALC round [ " << u 
-			// 	<< " ] COMPRESS nbEle [ " << nbEle << "] compression size [ " << outSize 
-			// 	<< " ] CR [" << 1.0f*nbEle*sizeof(float)/outSize << " ] " 
-			// 	<< " errorBound " << errorBound 
-			// 	<< " compress_time1 " << (end_compress - start_compress) * 1000.0f << " ms" 
-			// 	<< " decompress_time1 " << (end_decompress - start_decompress) * 1000.0f << " ms"
-			// 	<< std::endl;
+			
 
 			tmpRecvCound = recv_nbEle;
 
@@ -1333,6 +1336,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		Utils::recordCudaRenderTime("./compress_time.txt", u, Processor_ID, compress_time * 1000.0f);
 		Utils::recordCudaRenderTime("./decompress_time.txt", u, Processor_ID, decompress_time * 1000.0f);
 		Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
+		
 	}
 	// 拷贝回CPU
 	obr_rgb = new float[obr_x * obr_y * 3];
@@ -1571,6 +1575,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	
 
 	this->reset();
+
 }
 
 
@@ -2218,6 +2223,10 @@ void Processor::initImage(int w, int h)
 
 	int totalSize = kdTree->depth * obr_y * obr_x;
 	cudaMalloc(&d_alpha_values_u, totalSize * sizeof(float));
+
+
+	// init cuda compression stream
+	cudaStreamCreate(&stream);
 }
 
 
