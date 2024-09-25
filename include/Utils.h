@@ -16,7 +16,18 @@ public:
 	static void convertRRRGGGBBBtoRGB(float* src_buffer, size_t buffer_len, float* dst_buffer);
 
 	static void recordCudaRenderTime(const char* filename, int size, int rank, float elapsedTime);
-	
+	static void recordCudaRenderTime(const char* filename, std::string title, std::string iterator, float elapsedTime);
+	static void recordByte(const char* filename, std::string title, std::string iterator, size_t byte);
+	static void recordBSETime(const char* filename, int u, float elapsedTime, float compressTime = -1, float decompressTime = -1);
+	static void recordTotalTime(const char* filename, float elapsedTime, std::string iteration);
+	static void AddEndline(const char* filename);
+
+	static void parseArguments(int argc, char** argv, 
+					std::string& volumeFilename, int& xdim, int& ydim, int& zdim, 
+                    unsigned int& image_width, unsigned int& image_height, 
+					float& cam_dx, float& cam_dy, float& cam_dz,
+                    bool& usecompress, bool& useeffarea, 
+					std::string& iteration_str);
 
 };
 

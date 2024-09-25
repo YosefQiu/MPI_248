@@ -270,7 +270,6 @@ float odmocnina(float x)
 
 void Processor::binarySwap(float* imgColor, float* imageAlpha)
 {
-
 	float* img = nullptr;
 	float* reslut_rgb = new float[obr_x * obr_y * 3];
 	Utils::convertRRRGGGBBBtoRGB(imgColor, obr_x * obr_y * 3, reslut_rgb);
@@ -278,7 +277,6 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 
 	this->plan = new Plan[kdTree->depth];
 	float3 view_dir = camera->to - camera->from;
-	double each_round_time = 0.0;
 
 	createPlan(Processor_ID, kdTree->depth, kdTree->root, view_dir, plan);
 	obr = img;
@@ -287,11 +285,12 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 	int u = 0;					// 当前二叉交换的层次
 	Point2Di sa, sb;			// 要发送的子图像的起始和结束位置
 	Point2Di ra, rb;			// 要接收的子图像的起始和结束位置
-	//std::cout << "[createPlan]:: PID " << Processor_ID << " ok" << std::endl;
+	
+	double each_round_time_start, each_round_time_end, each_round_time;
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
-		double start_round_time = MPI_Wtime();
+		each_round_time_start = MPI_Wtime();
 		this->setDimensions(u, obr_a, obr_b, sa, sb, ra, rb);   // 设置发送和接收的子图像的尺寸
 		this->loadBuffer(sa, sb);                               // 填充发送缓冲区		
 
@@ -308,15 +307,15 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 		u++;
 		std::cout << "[binarySwap]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 		MPI_Barrier(MPI_COMM_WORLD);
-		double end_round_time = MPI_Wtime();
-		each_round_time += (end_round_time - start_round_time);
-		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
-		Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
+		each_round_time_end = MPI_Wtime();
+		each_round_time = (each_round_time_end - each_round_time_start) * 1000.0f;
+		if (Processor_ID == 0)
+		{
+			Utils::recordBSETime(save_time_file_path.c_str(),  u, each_round_time);
+		}
+		// 计算通信量  
+		rgba_totalSentBytes += sendcount * sizeof(float);
 	}
-	
-
-	
-
 	/* PART II - Final Image Gathering */
 	// 计算缓冲区大小
 	int sendWidth = std::abs(obr_b.x - obr_a.x) + 1;
@@ -336,6 +335,7 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 			Point2Di fa, fb;
 			fa.x = (int)fbuffer[0]; fa.y = (int)fbuffer[1]; fb.x = (int)fbuffer[2]; fb.y = (int)fbuffer[3];
 			//std::cout << "[partII::Recv]::PID " << Processor_ID << " fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
+			
 			int index = 4;
 			for (int j = fa.y; j <= fb.y; j++)
 			{
@@ -355,6 +355,8 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 					obr[pixelIndex + 3] = a;
 				}
 			}
+
+			rgba_totalSentBytes += bufsize * sizeof(float);
 		}
 
 		obr_a.x = 0; obr_a.y = 0;
@@ -421,7 +423,7 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 
 
 	MPI_Barrier(MPI_COMM_WORLD);
-	double start_time_alpha = MPI_Wtime(); // 开始计时
+	// double start_time_alpha = MPI_Wtime(); // 开始计时
 	
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
@@ -471,11 +473,11 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 		u++;
 		//std::cout << "[binarySwap_Alpha_GPU]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
 	}
-	MPI_Barrier(MPI_COMM_WORLD);
-	double end_time_alpha = MPI_Wtime(); // 结束计时
-	double elapsed_time_alpha = end_time_alpha - start_time_alpha;
-	elapsed_time_alpha *= 1000.0;
-	Utils::recordCudaRenderTime("./alpha_change_time.txt",Processor_Size, Processor_ID, elapsed_time_alpha);
+	// MPI_Barrier(MPI_COMM_WORLD);
+	// double end_time_alpha = MPI_Wtime(); // 结束计时
+	// double elapsed_time_alpha = end_time_alpha - start_time_alpha;
+	// elapsed_time_alpha *= 1000.0;
+	// Utils::recordCudaRenderTime("./alpha_change_time.txt",Processor_Size, Processor_ID, elapsed_time_alpha);
 }
 
 void Processor::AlphaGathering_CPU()
@@ -681,13 +683,14 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	float remaining_error = process_error;  // 剩余的误差限度
 	// Way 1
 	float errorBound = process_error / kdTree->depth;
+	errorBound = errorBound * 255.0f;
 	// way 2 
 	float run_one = process_error / pow(2, 1);
 	float run_two = process_error / pow(2, 2);
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
-		MPI_Barrier(MPI_COMM_WORLD);
-		double start_round_time = MPI_Wtime();
+		// MPI_Barrier(MPI_COMM_WORLD);
+		// double start_round_time = MPI_Wtime();
 		this->setDimensions(u, arae_a, area_b, sa, sb, ra, rb);
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
 		// this->setDimensions(u, arae_a, arae_a, sa, sb, ra, rb);
@@ -751,10 +754,10 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			size_t nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 			
 			
-			double start_compress = MPI_Wtime();
+			// double start_compress = MPI_Wtime();
 			unsigned char* bytes =  SZx_fast_compress_args(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, rgb_sbuffer, &outSize, ABS, errorBound, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
-			double end_compress = MPI_Wtime();
-			compress_time += (end_compress - start_compress);
+			// double end_compress = MPI_Wtime();
+			// compress_time += (end_compress - start_compress);
 			// way 1
 			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " CALC round [ " << u 
 				<< " ] COMPRESS nbEle [ " << nbEle << "] compression size [ " << outSize 
@@ -777,10 +780,10 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			MPI_Sendrecv(bytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
 					receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
-			double start_decompress = MPI_Wtime();
+			// double start_decompress = MPI_Wtime();
 			float *decompressedData = (float*)SZx_fast_decompress(SZx_NO_BLOCK_FAST_CMPR, SZx_FLOAT, receivedCompressedBytes, recv_byteLength, 0, 0, 0, 0, recv_nbEle);
-			double end_decompress = MPI_Wtime();
-			decompress_time += (end_decompress - start_decompress);
+			// double end_decompress = MPI_Wtime();
+			// decompress_time += (end_decompress - start_decompress);
 			float* tmp_buffer = new float[recv_nbEle];
 			//Utils::convertRRRGGGBBBtoRGB(decompressedData, recv_nbEle, tmp_buffer);
 			tmpRecvCound = recv_nbEle;
@@ -798,7 +801,6 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			delete[] decompressedData;
 
 			totalSentBytes += outSize;
-			totalReceivedBytes += recv_byteLength;
 		}
 		else if(bUseCompression == false) 
 		{
@@ -811,7 +813,6 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			
 			tmpRecvCound = recvcount;
 			totalSentBytes += sendcount * sizeof(float);
-			totalReceivedBytes += recvcount * sizeof(float);
 
 			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
 			arae_a = ra; area_b = rb;
@@ -821,12 +822,12 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		
 		
 		u++;
-		double end_round_time = MPI_Wtime();
-		each_round_time += (end_round_time - start_round_time);
+		// double end_round_time = MPI_Wtime();
+		// each_round_time += (end_round_time - start_round_time);
 		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
-		Utils::recordCudaRenderTime("./compress_time.txt", u, Processor_ID, compress_time * 1000.0f);
-		Utils::recordCudaRenderTime("./decompress_time.txt", u, Processor_ID, decompress_time * 1000.0f);
-		Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
+		// Utils::recordCudaRenderTime("./compress_time.txt", u, Processor_ID, compress_time * 1000.0f);
+		// Utils::recordCudaRenderTime("./decompress_time.txt", u, Processor_ID, decompress_time * 1000.0f);
+		// Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
 		
 	}
 
@@ -1173,8 +1174,8 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
-		MPI_Barrier(MPI_COMM_WORLD);
-		double start_round_time = MPI_Wtime();
+		// MPI_Barrier(MPI_COMM_WORLD);
+		// double start_round_time = MPI_Wtime();
 		this->setDimensions(u, arae_a, area_b, sa, sb, ra, rb);
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
 		
@@ -1244,15 +1245,15 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			pad_nbEle = (nbEle + 262144 - 1) / 262144 * 262144;
 			cudaMalloc((void**)&d_paddedData, sizeof(float) * pad_nbEle);
 			
-			double start_compress = MPI_Wtime();
+			// double start_compress = MPI_Wtime();
 			// 将原始的 d_rgb_sbuffer 拷贝到 d_paddedData 中
 			cudaMemcpy(d_paddedData, d_rgb_sbuffer, sizeof(float) * nbEle, cudaMemcpyDeviceToDevice);
 			cudaMalloc((void**)&d_cmpBytes, sizeof(unsigned char) * pad_nbEle); 
 
 			SZp_compress_deviceptr_f32(d_paddedData, d_cmpBytes, nbEle, &outSize, errorBound, stream);
-			double end_compress = MPI_Wtime();
+			// double end_compress = MPI_Wtime();
 			
-			compress_time += (end_compress - start_compress);
+			// compress_time += (end_compress - start_compress);
 
 
 			// // 解压缩需要 bytes, byteLength, nbEle 要用MPI发送
@@ -1275,18 +1276,18 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 						 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
 
-			double start_decompress = MPI_Wtime();
+			// double start_decompress = MPI_Wtime();
 			SZp_decompress_deviceptr_f32(d_rgb_rbuffer, receivedCompressedBytes, recv_nbEle, recv_byteLength, errorBound, stream);
 			
-			double end_decompress = MPI_Wtime();
-			decompress_time += (end_decompress - start_decompress);
+			// double end_decompress = MPI_Wtime();
+			// decompress_time += (end_decompress - start_decompress);
 			
 			
 
 			tmpRecvCound = recv_nbEle;
 
-			totalSentBytes += outSize;
-			totalReceivedBytes += recv_byteLength;
+			// totalSentBytes += outSize;
+			// totalReceivedBytes += recv_byteLength;
 
 			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
 			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
@@ -1313,7 +1314,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			
 			tmpRecvCound = recvcount;
 			totalSentBytes += sendcount * sizeof(float);
-			totalReceivedBytes += recvcount * sizeof(float);
+
 
 			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
 			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
@@ -1330,12 +1331,12 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		}
 
 		u++;
-		double end_round_time = MPI_Wtime();
-		each_round_time += (end_round_time - start_round_time);
+		// double end_round_time = MPI_Wtime();
+		// each_round_time += (end_round_time - start_round_time);
 		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
-		Utils::recordCudaRenderTime("./compress_time.txt", u, Processor_ID, compress_time * 1000.0f);
-		Utils::recordCudaRenderTime("./decompress_time.txt", u, Processor_ID, decompress_time * 1000.0f);
-		Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
+		// Utils::recordCudaRenderTime("./compress_time.txt", u, Processor_ID, compress_time * 1000.0f);
+		// Utils::recordCudaRenderTime("./decompress_time.txt", u, Processor_ID, decompress_time * 1000.0f);
+		// Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
 		
 	}
 	// 拷贝回CPU
@@ -2161,14 +2162,14 @@ void Processor::setCamera()
 	camera = new Camera(camPos, cameraLookAt, cameraWorldUp, 1.0f, 0.3f, 30.0f);
 }
 
-void Processor::setCameraProperty(float cam_dx, float cam_dy/*, std::optional<float> cam_vz*/)
+void Processor::setCameraProperty(float cam_dx, float cam_dy, std::optional<float> cam_vz)
 {
 	this->cam_dx = cam_dx;
 	this->cam_dy = cam_dy;
-	// if (cam_vz.has_value())
-	// {
-	// 	this->cam_vz = cam_vz.value();
-	// }
+	if (cam_vz.has_value())
+	{
+		this->cam_vz = cam_vz.value();
+	}
 
 	float rozm_x = this->kdTree->root->b.x - this->kdTree->root->a.x + 1;
 	float rozm_y = this->kdTree->root->b.y - this->kdTree->root->a.y + 1;

@@ -191,6 +191,60 @@ void Utils::recordCudaRenderTime(const char* filename, int size, int rank, float
     MPI_Barrier(MPI_COMM_WORLD);
 }
 
+void Utils::recordCudaRenderTime(const char* filename, std::string title, std::string iterator, float elapsedTime)
+{
+
+	std::ofstream outfile;
+    outfile.open(filename, std::ios_base::app);  
+
+	outfile << iterator << " " << title << " " << elapsedTime << std::endl;
+
+    outfile.close();
+
+}
+void Utils::recordByte(const char* filename, std::string title, std::string iterator, size_t byte)
+{
+
+	std::ofstream outfile;
+    outfile.open(filename, std::ios_base::app);  
+
+	outfile << iterator << " " << title << " " << byte << std::endl;
+
+    outfile.close();
+
+}
+
+void Utils::recordBSETime(const char* filename, int u, float elapsedTime, float compressTime, float decompressTime)
+{
+	std::ofstream outfile;
+    outfile.open(filename, std::ios_base::app);  
+	if (compressTime == -1 && decompressTime == -1)
+		outfile << "  " <<  u << " " << "0.0" << " " << "0.0" << " " << elapsedTime << std::endl;
+	else
+		outfile << "  " <<  u << " " << compressTime << " " << decompressTime << " " << elapsedTime << std::endl;
+	
+    outfile.close();
+}
+void Utils::AddEndline(const char* filename)
+{
+	std::ofstream outfile;
+	outfile.open(filename, std::ios_base::app);  
+	outfile << std::endl;
+	outfile.close();
+}
+
+void Utils::recordTotalTime(const char* filename, float elapsedTime, std::string iteration)
+{
+	std::ofstream outfile;
+    outfile.open(filename, std::ios_base::app);  
+
+    
+
+	outfile << iteration << " "  << elapsedTime << std::endl;
+
+    outfile.close();
+}
+
 void Utils::convertRGBtoRRRGGGBBB(float* src_buffer, size_t buffer_len, float* dst_buffer)
 {
 	size_t num_pixels = buffer_len / 3;
@@ -221,4 +275,48 @@ void Utils::convertRRRGGGBBBtoRGB(float* src_buffer, size_t buffer_len, float* d
         dst_buffer[3 * i + 1] = src_buffer[g_index++]; // G分量
         dst_buffer[3 * i + 2] = src_buffer[b_index++]; // B分量
     }
+}
+
+void Utils::parseArguments(int argc, char** argv, 
+					std::string& volumeFilename, int& xdim, int& ydim, int& zdim, 
+                    unsigned int& image_width, unsigned int& image_height, 
+					float& cam_dx, float& cam_dy, float& cam_dz,
+                    bool& usecompress, bool& useeffarea, 
+					std::string& iteration_str)
+{
+	std::string default_volumeFilename = "./res/Bucky.raw";
+	volumeFilename = default_volumeFilename;
+	xdim = 32; ydim = 32; zdim = 32;
+	image_width = 512; image_height = 512;
+	cam_dx = 1.0f; cam_dy = 1.0f; cam_dz = 0.35f;
+	usecompress = 0; useeffarea = 0;
+	iteration_str = "1";
+
+	if (argc >= 2 ) volumeFilename = argv[1];
+	if (argc >= 5 ) 
+	{
+		xdim = atoi(argv[2]);
+		ydim = atoi(argv[3]);
+		zdim = atoi(argv[4]);
+	}
+	if(argc >= 7)
+	{
+		image_width = atoi(argv[5]);
+		image_height = atoi(argv[6]);
+	}
+	if (argc >= 10)
+	{
+		cam_dx = atof(argv[7]);
+		cam_dy = atof(argv[8]);
+		cam_dz = atof(argv[9]);
+	}
+	if (argc >= 12)
+	{
+		usecompress = atoi(argv[10]);
+		useeffarea = atoi(argv[11]);
+	}
+	if (argc >= 13)
+	{
+		iteration_str = argv[12];
+	}
 }

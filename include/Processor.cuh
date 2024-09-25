@@ -65,11 +65,12 @@ public:
 	float*** alpha_values_u;		// 每次交换的当前的alpha 值
 	float* d_alpha_values_u;		// GPU上的每次交换的当前的alpha 值
 
+public:
+	//  计算通信量
 	size_t alpha_totalSentBytes = 0;
-	size_t alpha_totalReceivedBytes = 0;
-
 	size_t totalSentBytes = 0;
-	size_t totalReceivedBytes = 0;
+	size_t rgba_totalSentBytes = 0;
+
 public:
 	// camera
 	unsigned int camera_plane_x, camera_plane_y;
@@ -94,7 +95,8 @@ public:
 public:
 	unsigned char* data = nullptr;
 	unsigned char* data2 = nullptr;
-
+public:
+	std::string save_time_file_path;
 public:
 	Processor() :plan(nullptr), kdTree(nullptr), sbuffer(nullptr), rbuffer(nullptr), camera(nullptr)
 	{
@@ -137,7 +139,7 @@ public:
 public:
 	void setRatioUV();
 	void setCamera();
-	void setCameraProperty(float cam_dx, float cam_dy/*, std::optional<float> cam_vz = std::nullopt*/);
+	void setCameraProperty(float cam_dx, float cam_dy, std::optional<float> cam_vz = std::nullopt);
 private:
 	void initCamera(int rozm_x, int rozm_y, int rozm_z);
 	void updateCamera(int rozm_x, int rozm_y, int rozm_z);
