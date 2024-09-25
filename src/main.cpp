@@ -136,9 +136,9 @@ int main(int argc, char* argv[])
 	// 初始化CUDA 用来做数据采样相关 //TODO?
 	cudaExtent initCuda_size = make_cudaExtent((p->data_b.x - p->data_a.x + 1), (p->data_b.y - p->data_a.y + 1), (p->data_b.z - p->data_a.z));
 	std::cout << "[init cuda size]:: PID [ " << p->Processor_ID << " ] [ " 
-		<< p->data_b.x - p->data_a.x + 1 << ", " 
-		<< p->data_b.y - p->data_a.y + 1 << " , " 
-		<< p->data_b.z - p->data_a.z + 1 << "]" << std::endl;
+		<< initCuda_size.width << ", " 
+		<< initCuda_size.height << " , " 
+		<< initCuda_size.depth << "]" << std::endl;
 	cudakernel.initCuda(d_volume, initCuda_size);
 
 	// 分配设备内存-输出
@@ -237,8 +237,21 @@ int main(int argc, char* argv[])
 
 	if(usecomress == true)
 	{
+		double alpha_start_time, alpha_end_time, alpha_elapsed_time;
+		double rgb_start_time, rgb_end_time, rgb_elapsed_time;
+		cudaDeviceSynchronize();
+
+		MPI_Barrier(MPI_COMM_WORLD);
+		alpha_start_time = MPI_Wtime();
 		p->binarySwap_Alpha_GPU(d_output_alpha);
 		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
+		alpha_end_time = MPI_Wtime();
+		alpha_elapsed_time = alpha_end_time - alpha_start_time;
+		alpha_elapsed_time *= 1000.0f;
+		if (p->Processor_ID == 0)
+			Utils::recordCudaRenderTime(time_filename.c_str(), "binarySwap_Alpha Time:", iteration_str + ":", alpha_elapsed_time);
+		
+		//TODO 扣掉这部分
 		p->AlphaGathering_CPU();
 		//p->binarySwap_Alpha(h_alpha);
 		float global_error_bounded = 1E-2;
@@ -265,14 +278,17 @@ int main(int argc, char* argv[])
 
 
 
-		// MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
-		// double start_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 开始时间
+		MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
+		rgb_start_time = MPI_Wtime();
 		//p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
 		p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
-		// MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
-		// double end_time_swap = MPI_Wtime(); // 记录 binarySwap_RGB 结束时间
-		// double elapsed_time_swap = (end_time_swap - start_time_swap) * 1000.0; // 转换为毫秒
-		// Utils::recordCudaRenderTime("./binarySwap_RGB_time.txt", p->Processor_Size, p->Processor_ID, elapsed_time_swap);
+		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
+		rgb_end_time = MPI_Wtime();
+		rgb_elapsed_time = rgb_end_time - rgb_start_time;
+		rgb_elapsed_time *= 1000.0f;
+		if (p->Processor_ID == 0)
+			Utils::recordCudaRenderTime(time_filename.c_str(), "binarySwap_RGB Time:", iteration_str + ":", rgb_elapsed_time);
+		
 		delete[] error_array;
 		error_array = nullptr;
 	}
@@ -303,10 +319,21 @@ int main(int argc, char* argv[])
 		Utils::recordTotalTime(total_time_filename.c_str(), end_to_end_time, iteration_str);
 	}
 	
+#pragma region CalcBytes
 	// 计算通信量
 	size_t totalSentBytesAllProcesses = 0;
+	size_t alphaSentBytesAllProcesses = 0;
+	size_t rgbSentBytesAllProcesses = 0;
 	if(usecomress == true)
-	{}
+	{
+		MPI_Reduce(&p->alpha_totalSentBytes, &alphaSentBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+		MPI_Reduce(&p->rgb_totalSentBytes, &rgbSentBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+		if (p->Processor_ID == 0)
+		{
+			Utils::recordByte(time_filename.c_str(), "alphaSentBytes:", iteration_str + ":", alphaSentBytesAllProcesses);	
+			Utils::recordByte(time_filename.c_str(), "rgbSentBytes:", iteration_str + ":", rgbSentBytesAllProcesses);	
+		}
+	}
 	else
 	{
 		MPI_Reduce(&p->rgba_totalSentBytes, &totalSentBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -314,19 +341,9 @@ int main(int argc, char* argv[])
 			Utils::recordByte(time_filename.c_str(), "totalSentBytes:", iteration_str + ":", totalSentBytesAllProcesses);
 		
 	}
+#pragma endregion CalcBytes
 
-
-    // MPI_Reduce(&p->totalSentBytes, &totalSentBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    // MPI_Reduce(&p->totalReceivedBytes, &totalReceivedBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-	// size_t alpha_totalSentBytesAllProcesses = 0;
-    // size_t alpha_totalReceivedBytesAllProcesses = 0;
-    // MPI_Reduce(&p->alpha_totalSentBytes, &alpha_totalSentBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    // MPI_Reduce(&p->alpha_totalReceivedBytes, &alpha_totalReceivedBytesAllProcesses, 1, MPI_UNSIGNED_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    // if (p->Processor_ID == 0)
-    // {
-    //     std::cout << "[Processor::binarySwap_RGB]:: Total RGB Bytes: " << totalSentBytesAllProcesses 
-    //               << " Total ALPHA Bytes: " << alpha_totalReceivedBytesAllProcesses << std::endl;			
-    // }
+   
   
 	if(p->Processor_ID == 0)
 	{

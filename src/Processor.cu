@@ -465,9 +465,7 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 
 		obr_alpha_a = ra; obr_alpha_b = rb;//更新图像起始和结束位置
 
-
-		//alpha_totalSentBytes += sendcount * sizeof(float);
-		//alpha_totalReceivedBytes += recvcount * sizeof(float);
+		alpha_totalSentBytes += sendcount * sizeof(float);
 
 		
 		u++;
@@ -653,6 +651,7 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 
 }
 
+#pragma region hide
 void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression, bool bUseArea)
 {
 	
@@ -800,7 +799,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 			delete[] bytes;
 			delete[] decompressedData;
 
-			totalSentBytes += outSize;
+			// totalSentBytes += outSize;
 		}
 		else if(bUseCompression == false) 
 		{
@@ -812,7 +811,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 				  		 &rgb_rbuffer[0], recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 			
 			tmpRecvCound = recvcount;
-			totalSentBytes += sendcount * sizeof(float);
+			// totalSentBytes += sendcount * sizeof(float);
 
 			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
 			arae_a = ra; area_b = rb;
@@ -1135,6 +1134,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 	delete[] alpha_values_u;
 	alpha_values_u = nullptr;
 }
+#pragma endregion hide
 
 void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression, bool bUseArea)
 {
@@ -1149,10 +1149,6 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	Point2Di overlap_a; 
 	Point2Di overlap_b;
 
-	// 统计时间
-	double compress_time = 0.0;
-	double decompress_time = 0.0;
-	double each_round_time = 0.0;
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	// part I binary swap
@@ -1172,10 +1168,14 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	float run_one = process_error / pow(2, 1);
 	float run_two = process_error / pow(2, 2);
 
+	double each_round_time_start, each_round_time_end, each_round_time;
+	double compress_time_start, compress_time_end, compress_time;
+	double decompress_time_start, decompress_time_end, decompress_time;
+	double gather_d_time_start, gather_d_time_end, gather_d_time;
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
-		// MPI_Barrier(MPI_COMM_WORLD);
-		// double start_round_time = MPI_Wtime();
+		MPI_Barrier(MPI_COMM_WORLD);
+		each_round_time_start = MPI_Wtime();
 		this->setDimensions(u, arae_a, area_b, sa, sb, ra, rb);
 		this->setDimensions(u, obr_rgb_a, obr_rgb_b, sa, sb, ra, rb);
 		
@@ -1245,17 +1245,17 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			pad_nbEle = (nbEle + 262144 - 1) / 262144 * 262144;
 			cudaMalloc((void**)&d_paddedData, sizeof(float) * pad_nbEle);
 			
-			// double start_compress = MPI_Wtime();
+			MPI_Barrier(MPI_COMM_WORLD);
+			compress_time_start = MPI_Wtime();
 			// 将原始的 d_rgb_sbuffer 拷贝到 d_paddedData 中
 			cudaMemcpy(d_paddedData, d_rgb_sbuffer, sizeof(float) * nbEle, cudaMemcpyDeviceToDevice);
 			cudaMalloc((void**)&d_cmpBytes, sizeof(unsigned char) * pad_nbEle); 
 
 			SZp_compress_deviceptr_f32(d_paddedData, d_cmpBytes, nbEle, &outSize, errorBound, stream);
-			// double end_compress = MPI_Wtime();
+			MPI_Barrier(MPI_COMM_WORLD);
+			compress_time_end = MPI_Wtime();
+			compress_time = (compress_time_end - compress_time_start) * 1000.0f;
 			
-			// compress_time += (end_compress - start_compress);
-
-
 			// // 解压缩需要 bytes, byteLength, nbEle 要用MPI发送
 			// // 先发送 byteLength 和 nbEle
 			// 先发送 byteLength 和 nbEle
@@ -1275,19 +1275,19 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			MPI_Sendrecv(d_cmpBytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
 						 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
-
-			// double start_decompress = MPI_Wtime();
+			MPI_Barrier(MPI_COMM_WORLD);
+			decompress_time_start = MPI_Wtime();
 			SZp_decompress_deviceptr_f32(d_rgb_rbuffer, receivedCompressedBytes, recv_nbEle, recv_byteLength, errorBound, stream);
-			
-			// double end_decompress = MPI_Wtime();
-			// decompress_time += (end_decompress - start_decompress);
+			MPI_Barrier(MPI_COMM_WORLD);
+			decompress_time_end = MPI_Wtime();
+			decompress_time = (decompress_time_end - decompress_time_start) * 1000.0f;
 			
 			
 
 			tmpRecvCound = recv_nbEle;
 
-			// totalSentBytes += outSize;
-			// totalReceivedBytes += recv_byteLength;
+			rgb_totalSentBytes += outSize;
+
 
 			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
 			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
@@ -1313,7 +1313,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 				  		 d_rgb_rbuffer, recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 			
 			tmpRecvCound = recvcount;
-			totalSentBytes += sendcount * sizeof(float);
+			// totalSentBytes += sendcount * sizeof(float);
 
 
 			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
@@ -1331,12 +1331,15 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		}
 
 		u++;
-		// double end_round_time = MPI_Wtime();
-		// each_round_time += (end_round_time - start_round_time);
+		MPI_Barrier(MPI_COMM_WORLD);
+		each_round_time_end = MPI_Wtime();
+		each_round_time = (each_round_time_end - each_round_time_start) * 1000.0f;
+		
 		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
-		// Utils::recordCudaRenderTime("./compress_time.txt", u, Processor_ID, compress_time * 1000.0f);
-		// Utils::recordCudaRenderTime("./decompress_time.txt", u, Processor_ID, decompress_time * 1000.0f);
-		// Utils::recordCudaRenderTime("./each_round_time.txt", u, Processor_ID, each_round_time * 1000.0f);
+		if (Processor_ID == 0)
+		{
+			Utils::recordBSETime(save_time_file_path.c_str(),  u, each_round_time, compress_time, decompress_time);
+		}
 		
 	}
 	// 拷贝回CPU
@@ -1434,12 +1437,14 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 						obr_rgb[bOffset_obr + pixelIndex] = b;
 					}
 				}
+
+				
 			}
 			
 		}
 		// 清理资源
 		delete[] sendcounts;
-	delete[] displs;
+		delete[] displs;
 		if (fbuffer) { delete[] fbuffer; }
 		if (recvbuf) { delete[] recvbuf; }
 	}
@@ -1517,7 +1522,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 				unsigned char* recvCompressedData = recvbuf_compressed + displs[p];
 				size_t recv_outSize = static_cast<size_t>(recvOutSizes[p]);
 				size_t recv_nbEle = static_cast<size_t>(recvnbEleSize[p]);
-
+				rgb_totalSentBytes += sendcounts[p] * sizeof(float);
 				// 打印调试信息，确保 recvCompressedData 和 recvOutSizes 正确
 				// std::cout << "[Process " << p << "] Compressed data size: " << recvOutSizes[p] 
 				// 		<< ", Element count: " << recv_nbEle << std::endl;
@@ -1527,10 +1532,13 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 					// std::cerr << "Error: Invalid compressed data or size for process " << p << std::endl;
 					continue; // 跳过错误的进程
 				}
-
+				// MPI_Barrier(MPI_COMM_WORLD);
+				// gather_d_time_start = MPI_Wtime();
 				// 解压每个进程的数据
 				// std::cout << "[2222222]:: " << p << "before decompress" << std::endl;
 				float* decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, recvCompressedData, recv_outSize, 0, 0, 0, 0, recv_nbEle);
+				// MPI_Barrier(MPI_COMM_WORLD);
+				// gather_d_time_end = MPI_Wtime();
 				// std::cout << "[2222222]:: " << p << "finished decompress" << std::endl;
 				// 使用解压后的数据处理 RGB 数据
 				MetaData& meta = recvMeta[p];
@@ -1559,6 +1567,12 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 
 				// 清理解压后的数据
 				delete[] decompressedData;
+
+				gather_d_time += (gather_d_time_end - gather_d_time_start) * 1000.0f;
+				// if (Processor_ID == 0)
+				// {
+				// 	Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather decompress Time:", std::to_string(Processor_Size - 1), gather_d_time);
+				// }
 			}
 
 			// 清理内存

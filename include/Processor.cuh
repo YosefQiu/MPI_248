@@ -68,8 +68,10 @@ public:
 public:
 	//  计算通信量
 	size_t alpha_totalSentBytes = 0;
-	size_t totalSentBytes = 0;
+	size_t rgb_totalSentBytes = 0;
 	size_t rgba_totalSentBytes = 0;
+
+	
 
 public:
 	// camera
