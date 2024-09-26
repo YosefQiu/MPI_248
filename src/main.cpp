@@ -254,7 +254,7 @@ int main(int argc, char* argv[])
 		//TODO 扣掉这部分
 		p->AlphaGathering_CPU();
 		//p->binarySwap_Alpha(h_alpha);
-		float global_error_bounded = 1E-2;
+		float global_error_bounded = 1E-3;
 		int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
 		int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
 		float* error_array = new float[range_w * range_h];

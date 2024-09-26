@@ -2,6 +2,7 @@
 #include "FileManager.h"
 #include "Utils.h"
 
+#define GATHERING_IMAGE 1
 
 __global__ void fillSendBuffer(float* d_img_alpha, float* d_alpha_sbuffer, Point2Di sa, Point2Di sb, int obr_x) 
 {
@@ -1158,7 +1159,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	Point2Di oa, ob;
 
 	// 误差限度
-	float total_error = 0.005f;
+	float total_error = 0.00005f;
 	float process_error = total_error * 0.6f;
 	float gather_error = process_error * 0.4f;
 	float remaining_error = process_error;  // 剩余的误差限度
@@ -1172,6 +1173,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	double compress_time_start, compress_time_end, compress_time;
 	double decompress_time_start, decompress_time_end, decompress_time;
 	double gather_d_time_start, gather_d_time_end, gather_d_time;
+	
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
@@ -1240,18 +1242,23 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			// 	errorBound = run_one;
 			// }
 			
-			
+			outSize = 0;
 			nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 			pad_nbEle = (nbEle + 262144 - 1) / 262144 * 262144;
-			cudaMalloc((void**)&d_paddedData, sizeof(float) * pad_nbEle);
-			
+			cudaMalloc(&d_paddedData, sizeof(float) * pad_nbEle);
+			getLastCudaError("cudaMalloc d_paddedData failed");
+			cudaMemset(d_paddedData, 0, sizeof(float) * pad_nbEle);
+			getLastCudaError("cudaMemset d_paddedData failed");
 			MPI_Barrier(MPI_COMM_WORLD);
 			compress_time_start = MPI_Wtime();
 			// 将原始的 d_rgb_sbuffer 拷贝到 d_paddedData 中
 			cudaMemcpy(d_paddedData, d_rgb_sbuffer, sizeof(float) * nbEle, cudaMemcpyDeviceToDevice);
-			cudaMalloc((void**)&d_cmpBytes, sizeof(unsigned char) * pad_nbEle); 
-
+			getLastCudaError("cudaMemcpy d_rgb_sbuffer to d_paddedData failed");
+			cudaMalloc((void**)&d_cmpBytes, sizeof(float) * pad_nbEle); 
+			getLastCudaError("cudaMalloc d_cmpBytes failed");
+			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " errorBound [ " << errorBound <<  std::endl;
 			SZp_compress_deviceptr_f32(d_paddedData, d_cmpBytes, nbEle, &outSize, errorBound, stream);
+			getLastCudaError("SZp compress failed");
 			MPI_Barrier(MPI_COMM_WORLD);
 			compress_time_end = MPI_Wtime();
 			compress_time = (compress_time_end - compress_time_start) * 1000.0f;
@@ -1269,15 +1276,20 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			
 			// 发送压缩的数据
 			unsigned char* receivedCompressedBytes;
-			cudaMalloc(&receivedCompressedBytes, recv_byteLength * sizeof(unsigned char));
+			size_t recv_pad_nbEle = (recv_nbEle + 262144 - 1) / 262144 * 262144;
+			cudaMalloc(&receivedCompressedBytes, recv_byteLength * sizeof(float));
 			cudaMalloc(&d_decData, recv_nbEle * sizeof(float));
 
 			MPI_Sendrecv(d_cmpBytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
 						 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
-
+			
+			
+			
 			MPI_Barrier(MPI_COMM_WORLD);
 			decompress_time_start = MPI_Wtime();
-			SZp_decompress_deviceptr_f32(d_rgb_rbuffer, receivedCompressedBytes, recv_nbEle, recv_byteLength, errorBound, stream);
+			SZp_decompress_deviceptr_f32(d_decData, receivedCompressedBytes, recv_nbEle, recv_byteLength, errorBound, stream);
+			getLastCudaError("SZp decompress failed");
+			cudaMemcpy(d_rgb_rbuffer, d_decData, recv_nbEle * sizeof(float), cudaMemcpyDeviceToDevice);
 			MPI_Barrier(MPI_COMM_WORLD);
 			decompress_time_end = MPI_Wtime();
 			decompress_time = (decompress_time_end - decompress_time_start) * 1000.0f;
@@ -1292,7 +1304,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
 			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
 			arae_a = ra; area_b = rb;
-
+			
 			// this->compositngColorRRGGBB(u);
 			dim3 blockDim(16, 16);
 			dim3 gridDim((obr_rgb_b.x - obr_rgb_a.x + 1 + blockDim.x - 1) / blockDim.x, 
@@ -1346,6 +1358,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	obr_rgb = new float[obr_x * obr_y * 3];
 	cudaMemcpy(obr_rgb, d_obr_rgb, obr_x * obr_y * 3 * sizeof(float), cudaMemcpyDeviceToHost);
 
+#if GATHERING_IMAGE == 1
 	// part II final image gathering
 	// 计算缓冲区大小
 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
@@ -1588,7 +1601,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	
 	}
 	
-
+#endif
 	this->reset();
 
 }
@@ -2242,6 +2255,7 @@ void Processor::initImage(int w, int h)
 
 	// init cuda compression stream
 	cudaStreamCreate(&stream);
+	getLastCudaError("init stream failed");
 }
 
 
