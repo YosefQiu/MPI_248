@@ -26,26 +26,23 @@ public:
 	int data_len;
 	float3 whole_data_len;
 public:
-	// binary swap
+	// binary swap alpha
 	float* alpha_sbuffer;
 	float* alpha_rbuffer;
 	float* d_alpha_sbuffer;
 	float* d_alpha_rbuffer;
 
-
-
-	float* h_alpha_sbuffer;
-	float* h_alpha_rbuffer;
-	float h_s_len;
-	float h_r_len;
-
+	//  binary swap rgb
 	float* rgb_sbuffer;
 	float* rgb_rbuffer;
 	float* d_rgb_sbuffer;
 	float* d_rgb_rbuffer;
 
+	// binary swap rgba
 	float* sbuffer;
 	float* rbuffer;
+	float* d_rgba_sbuffer;
+	float* d_rgba_rbuffer;
 	
 	Plan* plan;
 	
@@ -58,10 +55,14 @@ public:
 	size_t tmpRecvCound;
 	
 	float* obr;						// 图像数组
+	float* d_obr_rgba;				// GPU上的图像数组
+	
 	float* obr_alpha;				// 图像alpha 数组
 	float* d_obr_alpha;				// GPU上的alpha数组
+	
 	float* obr_rgb;					// 图像rgb数组
 	float* d_obr_rgb;				// GPU上的rgb数组
+	
 	float*** alpha_values_u;		// 每次交换的当前的alpha 值
 	float* d_alpha_values_u;		// GPU上的每次交换的当前的alpha 值
 
@@ -72,7 +73,6 @@ public:
 	size_t rgba_totalSentBytes = 0;
 
 	
-
 public:
 	// camera
 	unsigned int camera_plane_x, camera_plane_y;
@@ -133,6 +133,7 @@ public:
 	void initData(const char* filename);
 	void initOpti();
 	void binarySwap(float* imgColor, float* imageAlpha);
+	void binarySwap_GPU(float* imgColor, float* imageAlpha);
 	void binarySwap_Alpha(float* img);
 	void binarySwap_RGB(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression = true, bool bUseArea = true);
 	void binarySwap_Alpha_GPU(float* d_imgAlpha);

@@ -254,7 +254,7 @@ int main(int argc, char* argv[])
 		//TODO 扣掉这部分
 		p->AlphaGathering_CPU();
 		//p->binarySwap_Alpha(h_alpha);
-		float global_error_bounded = 1E-3;
+		float global_error_bounded = 1E-2;
 		int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
 		int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
 		float* error_array = new float[range_w * range_h];
@@ -273,7 +273,7 @@ int main(int argc, char* argv[])
 			// 找到error_array中的最大值
 			float* max_error_ptr = std::min_element(error_array, error_array + range_w * range_h);
 			float max_error = *max_error_ptr;
-			std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
+			// std::cout << "[ERROR_BOUNDED]:: PID [ " << p->Processor_ID << " ] max_error " << max_error << std::endl;
 		}
 
 
@@ -298,7 +298,8 @@ int main(int argc, char* argv[])
 		double start_time, end_time, elapsed_time;
 		MPI_Barrier(MPI_COMM_WORLD);
 		start_time = MPI_Wtime(); 
-		p->binarySwap(h_rgb, h_alpha);
+		// p->binarySwap(h_rgb, h_alpha);
+		p->binarySwap_GPU(d_output_rgb, d_output_alpha);
 		MPI_Barrier(MPI_COMM_WORLD); 
 		end_time = MPI_Wtime(); 
 		elapsed_time = end_time - start_time;

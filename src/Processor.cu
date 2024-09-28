@@ -176,6 +176,98 @@ __global__ void copyAlphaToBuffer(float* d_img_alpha, float* d_fbuffer, Point2Di
     }
 }
 
+__global__ void convertRRRGGGBBBtoRGBKernel(const float* src_buffer, float* dst_buffer, size_t num_pixels) 
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < num_pixels) {
+        // 每个线程处理一个像素
+        size_t r_index = idx;
+        size_t g_index = idx + num_pixels;
+        size_t b_index = idx + 2 * num_pixels;
+
+        // 将 RRR GGG BBB 转换为 RGB
+        dst_buffer[3 * idx + 0] = src_buffer[r_index];   // R分量
+        dst_buffer[3 * idx + 1] = src_buffer[g_index];   // G分量
+        dst_buffer[3 * idx + 2] = src_buffer[b_index];   // B分量
+    }
+}
+
+__global__ void mergeRGBAToBuffer(float* d_imgColor, float* d_imgAlpha, float* d_img, int imgWidth, int imgHeight)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    // 计算像素索引
+    if (x < imgWidth && y < imgHeight) 
+	{
+        int idx = y * imgWidth + x; // 当前像素的索引
+
+        // RGB 数据：imgColor 有 3 个浮点数（RGB）每个像素
+        d_img[idx * 4 + 0] = d_imgColor[idx * 3 + 0];  // Red
+        d_img[idx * 4 + 1] = d_imgColor[idx * 3 + 1];  // Green
+        d_img[idx * 4 + 2] = d_imgColor[idx * 3 + 2];  // Blue
+        d_img[idx * 4 + 3] = d_imgAlpha[idx];        	// Alpha
+    }
+}
+
+__global__ void fillSendRGBABuffer(float* d_img, float* d_rgba_sbuffer, Point2Di sa, Point2Di sb, int obr_x)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x + sa.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y + sa.y;
+	if (x >= sa.x && x <= sb.x && y >= sa.y && y <= sb.y) 
+	{
+		int index = (y - sa.y) * (sb.x - sa.x + 1) + (x - sa.x); 
+        int pixelIndex = (y * obr_x + x) * 4; 
+
+        float r = d_img[pixelIndex + 0];
+        float g = d_img[pixelIndex + 1];
+        float b = d_img[pixelIndex + 2];
+        float a = d_img[pixelIndex + 3];
+
+        d_rgba_sbuffer[index * 4 + 0] = r;
+        d_rgba_sbuffer[index * 4 + 1] = g;
+        d_rgba_sbuffer[index * 4 + 2] = b;
+        d_rgba_sbuffer[index * 4 + 3] = a;
+	}
+	
+}
+
+__global__ void compositingRGBAKernel(float* d_img, float* d_rbuffer, Point2Di ra, Point2Di rb, int obr_x, int obr_y, bool over, int u)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x + ra.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y + ra.y;
+
+	if (x <= rb.x && y <= rb.y)
+	{
+		int pixelIndex = (y * obr_x + x) * 4;
+		int buffer_index = ((y - ra.y) * (rb.x - ra.x + 1) + (x - ra.x)) * 4;  // 在接收缓冲区中的索引
+		float r_float = d_img[pixelIndex + 0];
+        float g_float = d_img[pixelIndex + 1];
+        float b_float = d_img[pixelIndex + 2];
+        float a_float = d_img[pixelIndex + 3];
+
+		if (!over)
+		{
+			r_float = d_rbuffer[buffer_index + 0] + r_float * (1.0f - d_rbuffer[buffer_index + 3]);
+            g_float = d_rbuffer[buffer_index + 1] + g_float * (1.0f - d_rbuffer[buffer_index + 3]);
+            b_float = d_rbuffer[buffer_index + 2] + b_float * (1.0f - d_rbuffer[buffer_index + 3]);
+            a_float = d_rbuffer[buffer_index + 3] + a_float * (1.0f - d_rbuffer[buffer_index + 3]);
+		}
+		else
+		{
+			r_float = r_float + d_rbuffer[buffer_index + 0] * (1.0f - a_float);
+            g_float = g_float + d_rbuffer[buffer_index + 1] * (1.0f - a_float);
+            b_float = b_float + d_rbuffer[buffer_index + 2] * (1.0f - a_float);
+            a_float = a_float + d_rbuffer[buffer_index + 3] * (1.0f - a_float);
+		}
+		d_img[pixelIndex + 0] = r_float;
+        d_img[pixelIndex + 1] = g_float;
+        d_img[pixelIndex + 2] = b_float;
+        d_img[pixelIndex + 3] = a_float;
+	}
+}
+
 void Processor::init_node(float3& a, float3& b, int id)
 {
 	int r[3];
@@ -317,6 +409,7 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 		// 计算通信量  
 		rgba_totalSentBytes += sendcount * sizeof(float);
 	}
+#if GATHERING_IMAGE == 0
 	/* PART II - Final Image Gathering */
 	// 计算缓冲区大小
 	int sendWidth = std::abs(obr_b.x - obr_a.x) + 1;
@@ -395,9 +488,209 @@ void Processor::binarySwap(float* imgColor, float* imageAlpha)
 	}
 	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
 	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COMPOSITING " << std::endl;
+#endif
 	this->reset();
 }
 
+void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
+{
+	this->plan = new Plan[kdTree->depth];
+	float3 view_dir = camera->to - camera->from;
+	createPlan(Processor_ID, kdTree->depth, kdTree->root, view_dir, plan);
+	
+	size_t buffer_len = obr_x * obr_y * 3;
+	size_t num_rgb_pixels = buffer_len / 3;
+	int blockSize = 256;
+    int gridSize = (num_rgb_pixels + blockSize - 1) / blockSize;
+	float* d_imgColor = nullptr;
+	cudaMalloc(&d_imgColor, buffer_len * sizeof(float));
+	convertRRRGGGBBBtoRGBKernel<<<gridSize, blockSize>>>(imgColor, d_imgColor, num_rgb_pixels);
+	cudaDeviceSynchronize();
+	getLastCudaError("convertRRRGGGBBBtoRGB kernel failed");
+
+	// 初始化 GPU 图像数据 将 d_imgColor 和 imageAlpha 合并成一个
+	cudaMalloc(&d_obr_rgba, obr_x * obr_y * 4 * sizeof(float));
+	cudaDeviceSynchronize();
+	int numPixels = obr_x * obr_y;
+	dim3 blockDim(16, 16);
+	dim3 gridDim((obr_x + blockDim.x - 1) / blockDim.x, 
+				 (obr_y + blockDim.y - 1) / blockDim.y); 
+	mergeRGBAToBuffer<<<gridDim, blockDim>>>(d_imgColor, imageAlpha, d_obr_rgba, obr_x, obr_y);
+	cudaDeviceSynchronize();
+	getLastCudaError("mergeRGBAToBuffer kernel failed");
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	// part I binary swap
+	int u = 0;					// 当前二叉交换的层次
+	Point2Di sa, sb;			// 要发送的子图像的起始和结束位置
+	Point2Di ra, rb;			// 要接收的子图像的起始和结束位置
+	Point2Di oa, ob;
+	
+	double each_round_time_start, each_round_time_end, each_round_time;
+	double gather_d_time_start, gather_d_time_end, gather_d_time;
+	gather_d_time = 0.0;
+
+	while (kdTree->depth != 0 && u < kdTree->depth)
+	{
+		MPI_Barrier(MPI_COMM_WORLD);
+		each_round_time_start = MPI_Wtime();
+		this->setDimensions(u, arae_a, area_b, sa, sb, ra, rb);
+		this->setDimensions(u, obr_a, obr_b, sa, sb, ra, rb);
+		
+
+		oa.x = ra.x; oa.y = ra.y;
+		ob.x = rb.x; ob.y = rb.y;
+
+		int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 4;
+		int recvcount = (std::abs(oa.x - ob.x) + 1) * (std::abs(oa.y - ob.y) + 1) * 4;
+
+	
+		// 填充缓冲区 // CUDA 内核
+		int tmp_width = sb.x - sa.x + 1;
+		int tmp_height = sb.y - sa.y + 1;
+		blockDim = dim3(16, 16);
+		gridDim = dim3((tmp_width + blockDim.x - 1) / blockDim.x, (tmp_height + blockDim.y - 1) / blockDim.y);
+		fillSendRGBABuffer<<<gridDim, blockDim>>>(d_obr_rgba, d_rgba_sbuffer, sa, sb, obr_x);
+		cudaDeviceSynchronize();
+		getLastCudaError("fillSendRGBABuffer kernel failed");
+
+		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished loadColorBufferRRGGBBKernel " << std::endl;
+
+		// 发送和接收
+		MPI_Sendrecv(d_rgba_sbuffer, sendcount, MPI_FLOAT, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
+					   d_rgba_rbuffer, recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+		
+		tmpRecvCound = recvcount;
+		// totalSentBytes += sendcount * sizeof(float);
+
+
+		// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
+		obr_a = ra; obr_b = rb;//更新图像起始和结束位置
+		arae_a = ra; area_b = rb;
+
+		// this->compositngColorRRGGBB(u);
+		blockDim = dim3(16, 16);
+		gridDim = dim3((obr_b.x - obr_a.x + 1 + blockDim.x - 1) / blockDim.x, 
+					(obr_b.y - obr_a.y + 1 + blockDim.y - 1) / blockDim.y);
+		
+		compositingRGBAKernel<<<gridDim, blockDim>>>(d_obr_rgba, d_rgba_rbuffer, obr_a, obr_b, obr_x, obr_y, plan[u].over, u);
+		cudaDeviceSynchronize();
+		getLastCudaError("compositingRGBAKernel kernel failed");
+		
+		rgba_totalSentBytes += sendcount * sizeof(float);
+		u++;
+		MPI_Barrier(MPI_COMM_WORLD);
+		each_round_time_end = MPI_Wtime();
+		each_round_time = (each_round_time_end - each_round_time_start) * 1000.0f;
+		
+		// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " Finished round [ " << u << " ] " << std::endl;
+		if (Processor_ID == 0)
+		{
+			Utils::recordBSETime(save_time_file_path.c_str(),  u, each_round_time);
+		}
+		
+	}
+
+	double gather_time_s, gather_time_e, gather_time;
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	gather_time_s = MPI_Wtime();
+
+	// 拷贝回CPU
+	obr = new float[obr_x * obr_y * 4];
+	cudaMemcpy(obr, d_obr_rgba, obr_x * obr_y * 4 * sizeof(float), cudaMemcpyDeviceToHost);
+
+#if GATHERING_IMAGE == 1
+	/* PART II - Final Image Gathering */
+	// 计算缓冲区大小
+	int sendWidth = std::abs(obr_b.x - obr_a.x) + 1;
+	int sendHeight = std::abs(obr_b.y - obr_a.y) + 1;
+	int bufsize = sendWidth * sendHeight * 4;
+	bufsize += 4;
+	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
+	//std::cout << "PID " << Processor_ID << " obr_a [ " << obr_a.x << " " << obr_a.y << " ] obr_b [ " << obr_b.x << " " << obr_b.y << " ] buffer size " << bufsize <<
+	//	" width " << sendWidth << " height " << sendHeight << std::endl;
+
+	if (Processor_ID == 0)
+	{
+		for (u = 1; u < this->Processor_Size; u++)
+		{
+			
+			MPI_Recv(&fbuffer[0], bufsize, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &Processor_status);
+			Point2Di fa, fb;
+			fa.x = (int)fbuffer[0]; fa.y = (int)fbuffer[1]; fb.x = (int)fbuffer[2]; fb.y = (int)fbuffer[3];
+			//std::cout << "[partII::Recv]::PID " << Processor_ID << " fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
+			
+			int index = 4;
+			for (int j = fa.y; j <= fb.y; j++)
+			{
+				for (int i = fa.x; i <= fb.x; i++)
+				{
+					float r = fbuffer[index++];
+					float g = fbuffer[index++];
+					float b = fbuffer[index++];
+					float a = fbuffer[index++];
+
+					int pixelIndex = (j * obr_x + i) * 4;
+
+					// 将转换后的 float 分量存储到 obr 数组中
+					obr[pixelIndex + 0] = r;
+					obr[pixelIndex + 1] = g;
+					obr[pixelIndex + 2] = b;
+					obr[pixelIndex + 3] = a;
+				}
+			}
+
+			rgba_totalSentBytes += bufsize * sizeof(float);
+		}
+
+		obr_a.x = 0; obr_a.y = 0;
+		obr_b.x = obr_x ; obr_b.y = obr_y;
+	}
+	else
+	{
+		fbuffer[0] = obr_a.x; fbuffer[1] = obr_a.y;
+		fbuffer[2] = obr_b.x; fbuffer[3] = obr_b.y;
+
+		int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
+		for (int j = obr_a.y; j <= obr_b.y; j++)
+		{
+			for (int i = obr_a.x; i <= obr_b.x; i++)
+			{
+				// 计算当前像素在 obr 数组中的起始位置
+				int pixelIndex = (j * obr_x + i) * 4;
+
+				// 从 obr 数组中读取 RGBA 分量
+				float r_float = obr[pixelIndex + 0];
+				float g_float = obr[pixelIndex + 1];
+				float b_float = obr[pixelIndex + 2];
+				float a_float = obr[pixelIndex + 3];
+
+
+				// 将转换后的分量存储到 fbuffer 中
+				fbuffer[index++] = r_float;
+				fbuffer[index++] = g_float;
+				fbuffer[index++] = b_float;
+				fbuffer[index++] = a_float;
+			}
+		}
+		
+		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
+	}
+	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
+	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COMPOSITING " << std::endl;
+#endif
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	gather_time_e = MPI_Wtime();
+	gather_time = (gather_time_e - gather_time_s) * 1000.0f;
+	if (Processor_ID == 0)
+	{
+		Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather Time:", std::to_string(Processor_Size - 1), gather_time);
+	}
+
+	this->reset();
+}
 
 void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 {
@@ -540,6 +833,7 @@ void Processor::AlphaGathering_CPU()
 
 }
 
+#pragma region hide
 void Processor::binarySwap_Alpha(float* img_alpha)
 {
 	this->plan = new Plan[kdTree->depth];
@@ -651,6 +945,7 @@ void Processor::binarySwap_Alpha(float* img_alpha)
 	this->reset();
 
 }
+#pragma endregion hide
 
 #pragma region hide
 void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression, bool bUseArea)
@@ -882,7 +1177,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		
 		recvbuf = new float[Processor_Size * bufsize]; // 接收所有进程数据的缓冲区
 	}
-	if (bUseCompression == false)
+	if (bUseCompression == true)
 	{
 		// 所有进程调用 MPI_Gather，将 fbuffer 发送给进程 0
 		MPI_Gather(fbuffer, bufsize, MPI_FLOAT, recvbuf, bufsize, MPI_FLOAT, 0, MPI_COMM_WORLD);
@@ -920,7 +1215,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		if (fbuffer) { delete[] fbuffer; }
 		if (recvbuf) { delete[] recvbuf; }
 	}
-	else if(bUseCompression == true)
+	else if(bUseCompression == false)
 	{
 		// 压缩数据
 		size_t outSize;
@@ -1159,7 +1454,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	Point2Di oa, ob;
 
 	// 误差限度
-	float total_error = 0.00005f;
+	float total_error = 0.005f;
 	float process_error = total_error * 0.6f;
 	float gather_error = process_error * 0.4f;
 	float remaining_error = process_error;  // 剩余的误差限度
@@ -1173,7 +1468,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	double compress_time_start, compress_time_end, compress_time;
 	double decompress_time_start, decompress_time_end, decompress_time;
 	double gather_d_time_start, gather_d_time_end, gather_d_time;
-	
+	gather_d_time = 0.0;
 	while (kdTree->depth != 0 && u < kdTree->depth)
 	{
 		MPI_Barrier(MPI_COMM_WORLD);
@@ -1242,6 +1537,8 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			// 	errorBound = run_one;
 			// }
 			
+			MPI_Barrier(MPI_COMM_WORLD);
+			compress_time_start = MPI_Wtime();
 			outSize = 0;
 			nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 			pad_nbEle = (nbEle + 262144 - 1) / 262144 * 262144;
@@ -1249,14 +1546,12 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			getLastCudaError("cudaMalloc d_paddedData failed");
 			cudaMemset(d_paddedData, 0, sizeof(float) * pad_nbEle);
 			getLastCudaError("cudaMemset d_paddedData failed");
-			MPI_Barrier(MPI_COMM_WORLD);
-			compress_time_start = MPI_Wtime();
 			// 将原始的 d_rgb_sbuffer 拷贝到 d_paddedData 中
 			cudaMemcpy(d_paddedData, d_rgb_sbuffer, sizeof(float) * nbEle, cudaMemcpyDeviceToDevice);
 			getLastCudaError("cudaMemcpy d_rgb_sbuffer to d_paddedData failed");
 			cudaMalloc((void**)&d_cmpBytes, sizeof(float) * pad_nbEle); 
 			getLastCudaError("cudaMalloc d_cmpBytes failed");
-			std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " errorBound [ " << errorBound <<  std::endl;
+			// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " errorBound [ " << errorBound <<  std::endl;
 			SZp_compress_deviceptr_f32(d_paddedData, d_cmpBytes, nbEle, &outSize, errorBound, stream);
 			getLastCudaError("SZp compress failed");
 			MPI_Barrier(MPI_COMM_WORLD);
@@ -1354,11 +1649,16 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		}
 		
 	}
+
+	double gather_time_s, gather_time_e, gather_time_total;
+	// MPI_Barrier(MPI_COMM_WORLD);
+	gather_time_s = MPI_Wtime();
 	// 拷贝回CPU
 	obr_rgb = new float[obr_x * obr_y * 3];
 	cudaMemcpy(obr_rgb, d_obr_rgb, obr_x * obr_y * 3 * sizeof(float), cudaMemcpyDeviceToHost);
 
-#if GATHERING_IMAGE == 1
+
+	#if GATHERING_IMAGE == 1
 	// part II final image gathering
 	// 计算缓冲区大小
 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
@@ -1546,12 +1846,12 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 					continue; // 跳过错误的进程
 				}
 				// MPI_Barrier(MPI_COMM_WORLD);
-				// gather_d_time_start = MPI_Wtime();
+				gather_d_time_start = MPI_Wtime();
 				// 解压每个进程的数据
 				// std::cout << "[2222222]:: " << p << "before decompress" << std::endl;
 				float* decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, recvCompressedData, recv_outSize, 0, 0, 0, 0, recv_nbEle);
 				// MPI_Barrier(MPI_COMM_WORLD);
-				// gather_d_time_end = MPI_Wtime();
+				gather_d_time_end = MPI_Wtime();
 				// std::cout << "[2222222]:: " << p << "finished decompress" << std::endl;
 				// 使用解压后的数据处理 RGB 数据
 				MetaData& meta = recvMeta[p];
@@ -1578,14 +1878,16 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 					}
 				}
 
-				// 清理解压后的数据
-				delete[] decompressedData;
+				
 
 				gather_d_time += (gather_d_time_end - gather_d_time_start) * 1000.0f;
-				// if (Processor_ID == 0)
-				// {
-				// 	Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather decompress Time:", std::to_string(Processor_Size - 1), gather_d_time);
-				// }
+				if (p == Processor_Size - 1)
+				{
+					Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather decompress Time:", std::to_string(Processor_Size - 1), gather_d_time);
+				}
+
+				// 清理解压后的数据
+				delete[] decompressedData;
 			}
 
 			// 清理内存
@@ -1602,6 +1904,14 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	}
 	
 #endif
+
+	// MPI_Barrier(MPI_COMM_WORLD);
+	gather_time_e = MPI_Wtime();
+	gather_time_total = (gather_time_e - gather_time_s) * 1000.0f;
+	if (Processor_ID == 0)
+	{
+		Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather Time:", std::to_string(Processor_Size - 1), gather_time_total);
+	}
 	this->reset();
 
 }
@@ -2229,6 +2539,8 @@ void Processor::initImage(int w, int h)
 	int size = (obr_x / 2 + 1) * (obr_y) * 4;
 	sbuffer = new float[size];
 	rbuffer = new float[size];
+	cudaMalloc(&d_rgba_sbuffer, size * sizeof(float)); 
+	cudaMalloc(&d_rgba_rbuffer, size * sizeof(float)); 
 
 	int alpha_size = (obr_x / 2 + 1) * obr_y * 1;
 	alpha_sbuffer = new float[alpha_size];
@@ -2240,15 +2552,10 @@ void Processor::initImage(int w, int h)
 	int rgb_size = (obr_x / 2 + 1) * obr_y * 3;
 	rgb_sbuffer = new float[rgb_size];
 	rgb_rbuffer = new float[rgb_size];
-
-	// 在GPU上分配发送和接收缓冲区
 	cudaMalloc(&d_rgb_sbuffer, rgb_size * sizeof(float));
 	cudaMalloc(&d_rgb_rbuffer, rgb_size * sizeof(float));
 
-	// 在GPU上分配发送和接收缓冲区
-    cudaMalloc(&d_alpha_sbuffer, rgb_size / 3 * sizeof(float));
-    cudaMalloc(&d_alpha_rbuffer, rgb_size / 3 * sizeof(float));
-
+	
 	int totalSize = kdTree->depth * obr_y * obr_x;
 	cudaMalloc(&d_alpha_values_u, totalSize * sizeof(float));
 
