@@ -15,9 +15,9 @@ public:
     
 
     static void* loadRawFileSubVolume(
-        const std::string& fileName, int width, int height, int depth,
-        int startX, int endX, int startY, int endY, int startZ, int endZ,
-        int& subWidth, int& subHeight, int& subDepth);
+        std::string fileName, uint64_t width, uint64_t height, uint64_t depth,
+        uint64_t startX, uint64_t endX, uint64_t startY, uint64_t endY, uint64_t startZ, uint64_t endZ,
+        uint64_t& subWidth, uint64_t& subHeight, uint64_t& subDepth);
     
     static void saveRawFile(const std::string& fileName, const void* data, size_t dataSize);
 };

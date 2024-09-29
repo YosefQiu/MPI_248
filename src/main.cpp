@@ -108,7 +108,7 @@ int main(int argc, char* argv[])
 	p->initKDTree();
 	p->initImage(image_width, image_height);
 	p->initData(volumeFilename.c_str());
-	std::cout << "doned initdata\n";
+	std::cout << "doned init data\n";
 	p->initOpti(); // cam_dx = cam_dy = 0.0
 	p->setCameraProperty(dx, dy, dz);
 
@@ -251,9 +251,9 @@ int main(int argc, char* argv[])
 		if (p->Processor_ID == 0)
 			Utils::recordCudaRenderTime(time_filename.c_str(), "binarySwap_Alpha Time:", iteration_str + ":", alpha_elapsed_time);
 		
-		//TODO 扣掉这部分
+
 		p->AlphaGathering_CPU();
-		//p->binarySwap_Alpha(h_alpha);
+		
 		float global_error_bounded = 1E-2;
 		int range_w = static_cast<int>(h_minMaxXY[2] - h_minMaxXY[0] + 1);
 		int range_h = static_cast<int>(h_minMaxXY[3] - h_minMaxXY[1] + 1);
@@ -280,7 +280,6 @@ int main(int argc, char* argv[])
 
 		MPI_Barrier(MPI_COMM_WORLD); // 同步所有进程
 		rgb_start_time = MPI_Wtime();
-		//p->binarySwap_RGB(h_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
 		p->binarySwap_RGB_GPU(d_output_rgb, (int)h_minMaxXY[0], (int)h_minMaxXY[1], (int)h_minMaxXY[2], (int)h_minMaxXY[3], usecomress, useeffarea);
 		MPI_Barrier(MPI_COMM_WORLD); // 确保所有进程都完成操作
 		rgb_end_time = MPI_Wtime();

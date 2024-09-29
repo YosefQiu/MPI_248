@@ -608,9 +608,7 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 	int bufsize = sendWidth * sendHeight * 4;
 	bufsize += 4;
 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
-	//std::cout << "PID " << Processor_ID << " obr_a [ " << obr_a.x << " " << obr_a.y << " ] obr_b [ " << obr_b.x << " " << obr_b.y << " ] buffer size " << bufsize <<
-	//	" width " << sendWidth << " height " << sendHeight << std::endl;
-
+	
 	if (Processor_ID == 0)
 	{
 		for (u = 1; u < this->Processor_Size; u++)
@@ -700,15 +698,7 @@ void Processor::binarySwap_Alpha_GPU(float* d_img_alpha)
 	d_obr_alpha = d_img_alpha;
 
 
-	// TODO
-	// alpha_values_u = new float** [kdTree->depth];
-	// for (int u = 0; u < kdTree->depth; ++u) {
-	// 	alpha_values_u[u] = new float* [obr_y];
-	// 	for (int y = 0; y < obr_y; ++y) {
-	// 		alpha_values_u[u][y] = new float[obr_x];
-	// 	}
-	// }
-
+	
 
 	// part I binary swap
 	int u = 0;					// 当前二叉交换的层次
@@ -1177,7 +1167,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		
 		recvbuf = new float[Processor_Size * bufsize]; // 接收所有进程数据的缓冲区
 	}
-	if (bUseCompression == true)
+	if (bUseCompression == false)
 	{
 		// 所有进程调用 MPI_Gather，将 fbuffer 发送给进程 0
 		MPI_Gather(fbuffer, bufsize, MPI_FLOAT, recvbuf, bufsize, MPI_FLOAT, 0, MPI_COMM_WORLD);
@@ -1215,7 +1205,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		if (fbuffer) { delete[] fbuffer; }
 		if (recvbuf) { delete[] recvbuf; }
 	}
-	else if(bUseCompression == false)
+	else if(bUseCompression == ture)
 	{
 		// 压缩数据
 		size_t outSize;
@@ -1434,9 +1424,6 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 
 void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int MaxY, bool bUseCompression, bool bUseArea)
 {
-	// this->plan = new Plan[kdTree->depth];
-	// float3 view_dir = camera->to - camera->from;
-	// createPlan(Processor_ID, kdTree->depth, kdTree->root, view_dir, plan);
 	d_obr_rgb = img;
 
 	// 为了计算有效面积
@@ -1517,8 +1504,6 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
 		int recvcount = (std::abs(oa.x - ob.x) + 1) * (std::abs(oa.y - ob.y) + 1) * 3;
 
-		// cudaMalloc(&d_rgb_sbuffer, sendcount * sizeof(float));
-		// cudaMalloc(&d_rgb_rbuffer, recvcount * sizeof(float));
 
 		// 填充缓冲区 // CUDA 内核
 		dim3 blockDim(16, 16);
@@ -1539,20 +1524,8 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			
 			MPI_Barrier(MPI_COMM_WORLD);
 			compress_time_start = MPI_Wtime();
-			outSize = 0;
 			nbEle = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
-			pad_nbEle = (nbEle + 262144 - 1) / 262144 * 262144;
-			cudaMalloc(&d_paddedData, sizeof(float) * pad_nbEle);
-			getLastCudaError("cudaMalloc d_paddedData failed");
-			cudaMemset(d_paddedData, 0, sizeof(float) * pad_nbEle);
-			getLastCudaError("cudaMemset d_paddedData failed");
-			// 将原始的 d_rgb_sbuffer 拷贝到 d_paddedData 中
-			cudaMemcpy(d_paddedData, d_rgb_sbuffer, sizeof(float) * nbEle, cudaMemcpyDeviceToDevice);
-			getLastCudaError("cudaMemcpy d_rgb_sbuffer to d_paddedData failed");
-			cudaMalloc((void**)&d_cmpBytes, sizeof(float) * pad_nbEle); 
-			getLastCudaError("cudaMalloc d_cmpBytes failed");
-			// std::cout << "[binarySwap_RGB]:: PID " << Processor_ID << " errorBound [ " << errorBound <<  std::endl;
-			SZp_compress_deviceptr_f32(d_paddedData, d_cmpBytes, nbEle, &outSize, errorBound, stream);
+			SZp_compress_deviceptr_f32(d_rgb_sbuffer, d_cmpBytes, nbEle, &outSize, errorBound, stream);
 			getLastCudaError("SZp compress failed");
 			MPI_Barrier(MPI_COMM_WORLD);
 			compress_time_end = MPI_Wtime();
@@ -1566,32 +1539,29 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			MPI_Sendrecv(sendInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->Processor_ID,
 					     recvInfo, 2, MPI_UNSIGNED_LONG, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 
-			size_t recv_byteLength = recvInfo[0];
-			size_t recv_nbEle = recvInfo[1];
+			// size_t recv_byteLength = recvInfo[0];
+			// size_t recv_nbEle = recvInfo[1];
 			
 			// 发送压缩的数据
-			unsigned char* receivedCompressedBytes;
-			size_t recv_pad_nbEle = (recv_nbEle + 262144 - 1) / 262144 * 262144;
-			cudaMalloc(&receivedCompressedBytes, recv_byteLength * sizeof(float));
-			cudaMalloc(&d_decData, recv_nbEle * sizeof(float));
+			cudaMalloc(&d_rgb_rbuffer, recvInfo[1] * sizeof(float));
 
-			MPI_Sendrecv(d_cmpBytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
-						 receivedCompressedBytes, recv_byteLength, MPI_UNSIGNED_CHAR, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
+			MPI_Sendrecv(d_cmpBytes, outSize, MPI_UNSIGNED_CHAR, this->plan[u].pid, this->Processor_ID,
+						 receivedCompressedBytes, recvInfo[0], MPI_UNSIGNED_CHAR, this->plan[u].pid, this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
 			
 			
 			
 			MPI_Barrier(MPI_COMM_WORLD);
 			decompress_time_start = MPI_Wtime();
-			SZp_decompress_deviceptr_f32(d_decData, receivedCompressedBytes, recv_nbEle, recv_byteLength, errorBound, stream);
+			SZp_decompress_deviceptr_f32(d_rgb_rbuffer, receivedCompressedBytes, recvInfo[1], recvInfo[0], errorBound, stream);
 			getLastCudaError("SZp decompress failed");
-			cudaMemcpy(d_rgb_rbuffer, d_decData, recv_nbEle * sizeof(float), cudaMemcpyDeviceToDevice);
+			// cudaMemcpy(d_rgb_rbuffer, d_decData, recv_nbEle * sizeof(float), cudaMemcpyDeviceToDevice);
 			MPI_Barrier(MPI_COMM_WORLD);
 			decompress_time_end = MPI_Wtime();
 			decompress_time = (decompress_time_end - decompress_time_start) * 1000.0f;
 			
 			
 
-			tmpRecvCound = recv_nbEle;
+			tmpRecvCound = recvInfo[1];
 
 			rgb_totalSentBytes += outSize;
 
@@ -1610,32 +1580,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			cudaDeviceSynchronize();
 
 		}
-		else if(bUseCompression == false) 
-		{
-			// 计算发送和接收的大小
-			int sendcount = (std::abs(sa.x - sb.x) + 1) * (std::abs(sa.y - sb.y) + 1) * 3;
-			int recvcount = (std::abs(oa.x - ob.x) + 1) * (std::abs(oa.y - ob.y) + 1) * 3;
-			// 发送和接收
-			MPI_Sendrecv(d_rgb_sbuffer, sendcount, MPI_FLOAT, this->plan[u].pid, /*TAG1*/ this->Processor_ID,
-				  		 d_rgb_rbuffer, recvcount, MPI_FLOAT, this->plan[u].pid, /*TAG2*/ this->plan[u].pid, MPI_COMM_WORLD, &Processor_status);
-			
-			tmpRecvCound = recvcount;
-			// totalSentBytes += sendcount * sizeof(float);
-
-
-			// obr_rgb_a = ra; obr_rgb_b = rb;//更新图像起始和结束位置
-			obr_rgb_a = oa; obr_rgb_b = ob;//更新图像起始和结束位置
-			arae_a = ra; area_b = rb;
-
-			// this->compositngColorRRGGBB(u);
-			dim3 blockDim(16, 16);
-			dim3 gridDim((obr_rgb_b.x - obr_rgb_a.x + 1 + blockDim.x - 1) / blockDim.x, 
-						(obr_rgb_b.y - obr_rgb_a.y + 1 + blockDim.y - 1) / blockDim.y);
-
-			compositingColorRRGGBBKernel<<<gridDim, blockDim>>>(d_obr_rgb, d_rgb_rbuffer, d_alpha_values_u, 
-																obr_rgb_a, obr_rgb_b, obr_x, obr_y, plan[u].over, u);
-			cudaDeviceSynchronize();
-		}
+		
 
 		u++;
 		MPI_Barrier(MPI_COMM_WORLD);
@@ -1651,15 +1596,14 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	}
 
 	double gather_time_s, gather_time_e, gather_time_total;
-	// MPI_Barrier(MPI_COMM_WORLD);
-	gather_time_s = MPI_Wtime();
-	// 拷贝回CPU
+	
+	
 	obr_rgb = new float[obr_x * obr_y * 3];
 	cudaMemcpy(obr_rgb, d_obr_rgb, obr_x * obr_y * 3 * sizeof(float), cudaMemcpyDeviceToHost);
-
-
-	#if GATHERING_IMAGE == 1
-	// part II final image gathering
+	MPI_Barrier(MPI_COMM_WORLD);
+	gather_time_s = MPI_Wtime();
+	// 方法二
+	/* PART II - Final Image Gathering */
 	// 计算缓冲区大小
 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
 	obr_rgb_b.x = area_b.x; obr_rgb_b.y = area_b.y;
@@ -1668,250 +1612,292 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	int bufsize = sendWidth * sendHeight * 3;
 	bufsize += 4;
 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
-
-
-
+	
 	// R, G, B 通道在 obr_rgb 中的起始偏移量
 	int totalPixels = obr_x * obr_y;
 	int rOffset_obr = 0;                      // R 通道从 0 开始
 	int gOffset_obr = totalPixels;            // G 通道从 totalPixels 开始
 	int bOffset_obr = totalPixels * 2;        // B 通道从 2 * totalPixels 开始 
 
-	// 所有进程填充自己的 fbuffer 数据，包括进程 0
-	fbuffer[0] = obr_rgb_a.x; 
-	fbuffer[1] = obr_rgb_a.y; 
-	fbuffer[2] = obr_rgb_b.x; 
-	fbuffer[3] = obr_rgb_b.y;
-
-	int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
-	for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) {
-		for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) {
-			int pixelIndex = (j * obr_x + i) * 1;
-
-			// 从 color 数组中读取 RGB 分量
-			float r_float = obr_rgb[rOffset_obr + pixelIndex];
-			float g_float = obr_rgb[gOffset_obr + pixelIndex];
-			float b_float = obr_rgb[bOffset_obr + pixelIndex];
-
-			// 将RGB分量存储到 fbuffer 中
-			fbuffer[index++] = r_float;
-			fbuffer[index++] = g_float;
-			fbuffer[index++] = b_float;
-		}
-	}
-
-	// 进程 0 分配接收缓冲区
-	int* sendcounts = new int[Processor_Size];
-	int* displs = new int[Processor_Size];
-	// 每个进程将自己的 bufsize 发送给根进程
-	MPI_Gather(&bufsize, 1, MPI_INT, sendcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-	float* recvbuf = nullptr;
-	
-	if (Processor_ID == 0) 
+	if (Processor_ID == 0)
 	{
-		displs[0] = 0;
-		for (int i = 1; i < Processor_Size; i++)
+		for (u = 1; u < this->Processor_Size; u++)
 		{
-			displs[i] = displs[i - 1] + sendcounts[i - 1];
-		}
-		recvbuf = new float[displs[Processor_Size - 1] + sendcounts[Processor_Size - 1]];
-	}
-	if (bUseCompression == false)
-	{
-		// 所有进程调用 MPI_Gather，将 fbuffer 发送给进程 0
-		MPI_Gatherv(fbuffer, bufsize, MPI_FLOAT, recvbuf, sendcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
-
-		// 进程 0 收集数据后处理
-		if (Processor_ID == 0)
-		{
-			for (int p = 0; p < Processor_Size; p++) 
-			{
-				int offset = displs[p];
-				Point2Di fa, fb;
-				fa.x = static_cast<int>(recvbuf[offset + 0]);
-				fa.y = static_cast<int>(recvbuf[offset + 1]);
-				fb.x = static_cast<int>(recvbuf[offset + 2]);
-				fb.y = static_cast<int>(recvbuf[offset + 3]);
-
-				int index = 4;
-				for (int j = fa.y; j <= fb.y; j++) 
-				{
-					for (int i = fa.x; i <= fb.x; i++) 
-					{
-						int pixelIndex = (j * obr_x + i) * 1;
-
-						float r = recvbuf[offset + index++];
-						float g = recvbuf[offset + index++];
-						float b = recvbuf[offset + index++];
-
-						obr_rgb[rOffset_obr + pixelIndex] = r;
-						obr_rgb[gOffset_obr + pixelIndex] = g;
-						obr_rgb[bOffset_obr + pixelIndex] = b;
-					}
-				}
-
-				
-			}
 			
+			MPI_Recv(&fbuffer[0], bufsize, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &Processor_status);
+			Point2Di fa, fb;
+			fa.x = (int)fbuffer[0]; fa.y = (int)fbuffer[1]; fb.x = (int)fbuffer[2]; fb.y = (int)fbuffer[3];
+			
+			int index = 4;
+
+			for (int j = fa.y; j <= fb.y; j++)
+			{
+				for (int i = fa.x; i <= fb.x; i++)
+				{
+					int pixelIndex = (j * obr_x + i) * 1;
+					float r = fbuffer[index++];
+					float g = fbuffer[index++];
+					float b = fbuffer[index++];
+
+					// 将解压后的 R, G, B 数据存储到 obr_rgb 中
+					obr_rgb[rOffset_obr + pixelIndex] = r;
+					obr_rgb[gOffset_obr + pixelIndex] = g;
+					obr_rgb[bOffset_obr + pixelIndex] = b;
+				}
+			}
+
+			rgba_totalSentBytes += bufsize * sizeof(float);
 		}
-		// 清理资源
-		delete[] sendcounts;
-		delete[] displs;
-		if (fbuffer) { delete[] fbuffer; }
-		if (recvbuf) { delete[] recvbuf; }
+
+		obr_a.x = 0; obr_a.y = 0;
+		obr_b.x = obr_x ; obr_b.y = obr_y;
 	}
-	else if(bUseCompression == true)
+	else
 	{
-		// 压缩数据
-		size_t outSize;
-		size_t nbEle = bufsize - 4;
-		unsigned char* compressedData = SZx_fast_compress_args(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, fbuffer + 4, &outSize, REL, gather_error, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
+		
+		// 所有进程填充自己的 fbuffer 数据，包括进程 0
+		fbuffer[0] = obr_rgb_a.x; 
+		fbuffer[1] = obr_rgb_a.y; 
+		fbuffer[2] = obr_rgb_b.x; 
+		fbuffer[3] = obr_rgb_b.y;
 
-		// 定义 MetaData 结构体
-		struct MetaData
+		int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
+		for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) 
 		{
-			int fa_x, fa_y, fb_x, fb_y;  // 数据范围
-			size_t outSize;              // 压缩后的大小
-			size_t nbEle;                // 原始数据元素个数
-		};
-
-		// 创建并发送元数据
-		MetaData meta = {static_cast<int>(obr_rgb_a.x), static_cast<int>(obr_rgb_a.y),
-						static_cast<int>(obr_rgb_b.x), static_cast<int>(obr_rgb_b.y), outSize, nbEle};
-
-		MetaData* recvMeta = nullptr;
-		if (Processor_ID == 0)
-		{
-			recvMeta = new MetaData[Processor_Size];  // 接收所有进程的元数据
-		}
-
-		// 使用 MPI_Gather 收集元数据
-		MPI_Gather(&meta, sizeof(MetaData), MPI_BYTE, recvMeta, sizeof(MetaData), MPI_BYTE, 0, MPI_COMM_WORLD);
-
-		unsigned char* recvbuf_compressed = nullptr;
-		int* recvOutSizes = nullptr;
-		int* recvnbEleSize = nullptr;
-		int* displs = nullptr;
-		// 进程 0 处理元数据，准备进行 MPI_Gatherv
-		if (Processor_ID == 0)
-		{
-			// 处理元数据：提取每个进程的 outSize 和 nbEle，并计算总的接收大小
-			recvOutSizes = new int[Processor_Size];  // 每个进程的压缩数据大小 outSize
-			recvnbEleSize = new int[Processor_Size]; // 每个进程原始数据的元素个数 nbEle
-			displs = new int[Processor_Size];        // 偏移量
-
-			size_t totalCompressedSize = 0;
-			displs[0] = 0;  // 初始化第一个偏移量
-
-			// 处理元数据并计算总压缩大小和偏移量
-			for (int i = 0; i < Processor_Size; i++)
+			for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) 
 			{
-				recvOutSizes[i] = static_cast<int>(recvMeta[i].outSize);
-				recvnbEleSize[i] = static_cast<int>(recvMeta[i].nbEle);
-				totalCompressedSize += recvOutSizes[i];  // 计算所有压缩数据的总大小
+				int pixelIndex = (j * obr_x + i) * 1;
 
-				if (i > 0)
-				{
-					displs[i] = displs[i - 1] + recvOutSizes[i - 1];
-				}
-				// std::cout << "[DOTEST===] " << i << " outSize " << recvOutSizes[i] << " nbELeSize " << recvnbEleSize[i] << std::endl;
+				// 从 color 数组中读取 RGB 分量
+				float r_float = obr_rgb[rOffset_obr + pixelIndex];
+				float g_float = obr_rgb[gOffset_obr + pixelIndex];
+				float b_float = obr_rgb[bOffset_obr + pixelIndex];
+
+				// 将RGB分量存储到 fbuffer 中
+				fbuffer[index++] = r_float;
+				fbuffer[index++] = g_float;
+				fbuffer[index++] = b_float;
 			}
-
-			// 为进程 0 分配接收压缩数据的缓冲区
-			recvbuf_compressed = new unsigned char[totalCompressedSize];
 		}
-
-		// 使用 MPI_Gatherv 收集压缩数据
-		// std::cout << "[==========================] before" << std::endl;
-		MPI_Gatherv(compressedData, static_cast<int>(outSize), MPI_UNSIGNED_CHAR, recvbuf_compressed, recvOutSizes, displs, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
-		// std::cout << "[==========================] after" << std::endl;
-		if(Processor_ID == 0)
-		{
-			// 进程 0 解压和合成数据
-			for (int p = 1; p < Processor_Size; p++)
-			{
-				// 获取压缩数据和元素个数
-				unsigned char* recvCompressedData = recvbuf_compressed + displs[p];
-				size_t recv_outSize = static_cast<size_t>(recvOutSizes[p]);
-				size_t recv_nbEle = static_cast<size_t>(recvnbEleSize[p]);
-				rgb_totalSentBytes += sendcounts[p] * sizeof(float);
-				// 打印调试信息，确保 recvCompressedData 和 recvOutSizes 正确
-				// std::cout << "[Process " << p << "] Compressed data size: " << recvOutSizes[p] 
-				// 		<< ", Element count: " << recv_nbEle << std::endl;
-
-				// 检查recvCompressedData 和 recvOutSizes[p] 是否有效
-				if (recvCompressedData == nullptr || recvOutSizes[p] == 0) {
-					// std::cerr << "Error: Invalid compressed data or size for process " << p << std::endl;
-					continue; // 跳过错误的进程
-				}
-				// MPI_Barrier(MPI_COMM_WORLD);
-				gather_d_time_start = MPI_Wtime();
-				// 解压每个进程的数据
-				// std::cout << "[2222222]:: " << p << "before decompress" << std::endl;
-				float* decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, recvCompressedData, recv_outSize, 0, 0, 0, 0, recv_nbEle);
-				// MPI_Barrier(MPI_COMM_WORLD);
-				gather_d_time_end = MPI_Wtime();
-				// std::cout << "[2222222]:: " << p << "finished decompress" << std::endl;
-				// 使用解压后的数据处理 RGB 数据
-				MetaData& meta = recvMeta[p];
-				Point2Di fa, fb;
-				fa.x = meta.fa_x;
-				fa.y = meta.fa_y;
-				fb.x = meta.fb_x;
-				fb.y = meta.fb_y;
-
-				int index = 0;  // 解压后的数据从第0项开始
-				for (int j = fa.y; j <= fb.y; j++)
-				{
-					for (int i = fa.x; i <= fb.x; i++)
-					{
-						int pixelIndex = (j * obr_x + i) * 1;
-						float r = decompressedData[index++];
-						float g = decompressedData[index++];
-						float b = decompressedData[index++];
-
-						// 将解压后的 R, G, B 数据存储到 obr_rgb 中
-						obr_rgb[rOffset_obr + pixelIndex] = r;
-						obr_rgb[gOffset_obr + pixelIndex] = g;
-						obr_rgb[bOffset_obr + pixelIndex] = b;
-					}
-				}
-
-				
-
-				gather_d_time += (gather_d_time_end - gather_d_time_start) * 1000.0f;
-				if (p == Processor_Size - 1)
-				{
-					Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather decompress Time:", std::to_string(Processor_Size - 1), gather_d_time);
-				}
-
-				// 清理解压后的数据
-				delete[] decompressedData;
-			}
-
-			// 清理内存
-			delete[] recvOutSizes;
-			delete[] recvnbEleSize;
-			delete[] displs;
-			delete[] recvbuf_compressed;
-			delete[] recvMeta;
-		}
-
-		// 清理压缩数据
-		delete[] compressedData;
-	
+		
+		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
 	}
-	
-#endif
-
-	// MPI_Barrier(MPI_COMM_WORLD);
+	MPI_Barrier(MPI_COMM_WORLD);
 	gather_time_e = MPI_Wtime();
 	gather_time_total = (gather_time_e - gather_time_s) * 1000.0f;
 	if (Processor_ID == 0)
 	{
 		Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather Time:", std::to_string(Processor_Size - 1), gather_time_total);
 	}
+	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
+	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COMPOSITING " << std::endl;
+
+
+// #if GATHERING_IMAGE == 0
+// 	// part II final image gathering
+// 	// 计算缓冲区大小
+// 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
+// 	obr_rgb_b.x = area_b.x; obr_rgb_b.y = area_b.y;
+// 	int sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
+// 	int sendHeight = std::abs(obr_rgb_b.y - obr_rgb_a.y) + 1;
+// 	int bufsize = sendWidth * sendHeight * 3;
+// 	bufsize += 4;
+// 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
+
+
+
+// 	// R, G, B 通道在 obr_rgb 中的起始偏移量
+// 	int totalPixels = obr_x * obr_y;
+// 	int rOffset_obr = 0;                      // R 通道从 0 开始
+// 	int gOffset_obr = totalPixels;            // G 通道从 totalPixels 开始
+// 	int bOffset_obr = totalPixels * 2;        // B 通道从 2 * totalPixels 开始 
+
+// 	// 所有进程填充自己的 fbuffer 数据，包括进程 0
+// 	fbuffer[0] = obr_rgb_a.x; 
+// 	fbuffer[1] = obr_rgb_a.y; 
+// 	fbuffer[2] = obr_rgb_b.x; 
+// 	fbuffer[3] = obr_rgb_b.y;
+
+// 	int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
+// 	for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) {
+// 		for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) {
+// 			int pixelIndex = (j * obr_x + i) * 1;
+
+// 			// 从 color 数组中读取 RGB 分量
+// 			float r_float = obr_rgb[rOffset_obr + pixelIndex];
+// 			float g_float = obr_rgb[gOffset_obr + pixelIndex];
+// 			float b_float = obr_rgb[bOffset_obr + pixelIndex];
+
+// 			// 将RGB分量存储到 fbuffer 中
+// 			fbuffer[index++] = r_float;
+// 			fbuffer[index++] = g_float;
+// 			fbuffer[index++] = b_float;
+// 		}
+// 	}
+
+// 	// 进程 0 分配接收缓冲区
+// 	int* sendcounts = new int[Processor_Size];
+// 	int* displs = new int[Processor_Size];
+// 	// 每个进程将自己的 bufsize 发送给根进程
+// 	MPI_Gather(&bufsize, 1, MPI_INT, sendcounts, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+// 	float* recvbuf = nullptr;
+	
+// 	if (Processor_ID == 0) 
+// 	{
+// 		displs[0] = 0;
+// 		for (int i = 1; i < Processor_Size; i++)
+// 		{
+// 			displs[i] = displs[i - 1] + sendcounts[i - 1];
+// 		}
+// 		recvbuf = new float[displs[Processor_Size - 1] + sendcounts[Processor_Size - 1]];
+// 	}
+	
+// 	if(1)
+// 	{
+// 		// 压缩数据
+// 		size_t outSize;
+// 		size_t nbEle = bufsize - 4;
+// 		unsigned char* compressedData = SZx_fast_compress_args(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, fbuffer + 4, &outSize, REL, gather_error, 0.001, 0, 0, 0, 0, 0, 0, nbEle);
+
+// 		// 定义 MetaData 结构体
+// 		struct MetaData
+// 		{
+// 			int fa_x, fa_y, fb_x, fb_y;  // 数据范围
+// 			size_t outSize;              // 压缩后的大小
+// 			size_t nbEle;                // 原始数据元素个数
+// 		};
+
+// 		// 创建并发送元数据
+// 		MetaData meta = {static_cast<int>(obr_rgb_a.x), static_cast<int>(obr_rgb_a.y),
+// 						static_cast<int>(obr_rgb_b.x), static_cast<int>(obr_rgb_b.y), outSize, nbEle};
+
+// 		MetaData* recvMeta = nullptr;
+// 		if (Processor_ID == 0)
+// 		{
+// 			recvMeta = new MetaData[Processor_Size];  // 接收所有进程的元数据
+// 		}
+
+// 		// 使用 MPI_Gather 收集元数据
+// 		MPI_Gather(&meta, sizeof(MetaData), MPI_BYTE, recvMeta, sizeof(MetaData), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+// 		unsigned char* recvbuf_compressed = nullptr;
+// 		int* recvOutSizes = nullptr;
+// 		int* recvnbEleSize = nullptr;
+// 		int* displs = nullptr;
+// 		// 进程 0 处理元数据，准备进行 MPI_Gatherv
+// 		if (Processor_ID == 0)
+// 		{
+// 			// 处理元数据：提取每个进程的 outSize 和 nbEle，并计算总的接收大小
+// 			recvOutSizes = new int[Processor_Size];  // 每个进程的压缩数据大小 outSize
+// 			recvnbEleSize = new int[Processor_Size]; // 每个进程原始数据的元素个数 nbEle
+// 			displs = new int[Processor_Size];        // 偏移量
+
+// 			size_t totalCompressedSize = 0;
+// 			displs[0] = 0;  // 初始化第一个偏移量
+
+// 			// 处理元数据并计算总压缩大小和偏移量
+// 			for (int i = 0; i < Processor_Size; i++)
+// 			{
+// 				recvOutSizes[i] = static_cast<int>(recvMeta[i].outSize);
+// 				recvnbEleSize[i] = static_cast<int>(recvMeta[i].nbEle);
+// 				totalCompressedSize += recvOutSizes[i];  // 计算所有压缩数据的总大小
+
+// 				if (i > 0)
+// 				{
+// 					displs[i] = displs[i - 1] + recvOutSizes[i - 1];
+// 				}
+// 				// std::cout << "[DOTEST===] " << i << " outSize " << recvOutSizes[i] << " nbELeSize " << recvnbEleSize[i] << std::endl;
+// 			}
+
+// 			// 为进程 0 分配接收压缩数据的缓冲区
+// 			recvbuf_compressed = new unsigned char[totalCompressedSize];
+// 		}
+
+// 		// 使用 MPI_Gatherv 收集压缩数据
+// 		// std::cout << "[==========================] before" << std::endl;
+// 		MPI_Gatherv(compressedData, static_cast<int>(outSize), MPI_UNSIGNED_CHAR, recvbuf_compressed, recvOutSizes, displs, MPI_UNSIGNED_CHAR, 0, MPI_COMM_WORLD);
+// 		// std::cout << "[==========================] after" << std::endl;
+// 		if(Processor_ID == 0)
+// 		{
+// 			// 进程 0 解压和合成数据
+// 			for (int p = 1; p < Processor_Size; p++)
+// 			{
+// 				// 获取压缩数据和元素个数
+// 				unsigned char* recvCompressedData = recvbuf_compressed + displs[p];
+// 				size_t recv_outSize = static_cast<size_t>(recvOutSizes[p]);
+// 				size_t recv_nbEle = static_cast<size_t>(recvnbEleSize[p]);
+// 				rgb_totalSentBytes += sendcounts[p] * sizeof(float);
+// 				// 打印调试信息，确保 recvCompressedData 和 recvOutSizes 正确
+// 				// std::cout << "[Process " << p << "] Compressed data size: " << recvOutSizes[p] 
+// 				// 		<< ", Element count: " << recv_nbEle << std::endl;
+
+// 				// 检查recvCompressedData 和 recvOutSizes[p] 是否有效
+// 				if (recvCompressedData == nullptr || recvOutSizes[p] == 0) {
+// 					// std::cerr << "Error: Invalid compressed data or size for process " << p << std::endl;
+// 					continue; // 跳过错误的进程
+// 				}
+// 				// MPI_Barrier(MPI_COMM_WORLD);
+// 				gather_d_time_start = MPI_Wtime();
+// 				// 解压每个进程的数据
+// 				// std::cout << "[2222222]:: " << p << "before decompress" << std::endl;
+// 				float* decompressedData = (float*)SZx_fast_decompress(SZx_WITH_BLOCK_FAST_CMPR, SZx_FLOAT, recvCompressedData, recv_outSize, 0, 0, 0, 0, recv_nbEle);
+// 				// MPI_Barrier(MPI_COMM_WORLD);
+// 				gather_d_time_end = MPI_Wtime();
+// 				// std::cout << "[2222222]:: " << p << "finished decompress" << std::endl;
+// 				// 使用解压后的数据处理 RGB 数据
+// 				MetaData& meta = recvMeta[p];
+// 				Point2Di fa, fb;
+// 				fa.x = meta.fa_x;
+// 				fa.y = meta.fa_y;
+// 				fb.x = meta.fb_x;
+// 				fb.y = meta.fb_y;
+
+// 				int index = 0;  // 解压后的数据从第0项开始
+// 				for (int j = fa.y; j <= fb.y; j++)
+// 				{
+// 					for (int i = fa.x; i <= fb.x; i++)
+// 					{
+// 						int pixelIndex = (j * obr_x + i) * 1;
+// 						float r = decompressedData[index++];
+// 						float g = decompressedData[index++];
+// 						float b = decompressedData[index++];
+
+// 						// 将解压后的 R, G, B 数据存储到 obr_rgb 中
+// 						obr_rgb[rOffset_obr + pixelIndex] = r;
+// 						obr_rgb[gOffset_obr + pixelIndex] = g;
+// 						obr_rgb[bOffset_obr + pixelIndex] = b;
+// 					}
+// 				}
+
+				
+
+// 				gather_d_time += (gather_d_time_end - gather_d_time_start) * 1000.0f;
+// 				if (p == Processor_Size - 1)
+// 				{
+// 					Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather decompress Time:", std::to_string(Processor_Size - 1), gather_d_time);
+// 				}
+
+// 				// 清理解压后的数据
+// 				delete[] decompressedData;
+// 			}
+
+// 			// 清理内存
+// 			delete[] recvOutSizes;
+// 			delete[] recvnbEleSize;
+// 			delete[] displs;
+// 			delete[] recvbuf_compressed;
+// 			delete[] recvMeta;
+// 		}
+
+// 		// 清理压缩数据
+// 		delete[] compressedData;
+	
+// 	}
+	
+// #endif
+
+	
 	this->reset();
 
 }
@@ -2445,19 +2431,30 @@ void Processor::createPlan(int ID, int depth, Node* n, const float3& v, Plan*& o
 void Processor::master_load_data(float3 a, float3 b, std::string s)
 {
 	// 计算起始点和终止点的索引
-	int startX = a.x;
-	int startY = a.y;
-	int startZ = a.z;
+	uint64_t startX = a.x;
+	uint64_t startY = a.y;
+	uint64_t startZ = a.z;
 
-	int endX = b.x ;
-	int endY = b.y;
-	int endZ = b.z;
-	size_t local_volume_size = (endX - startX + 1) * (endY - startY + 1) * (endZ - startZ + 1) * sizeof(unsigned char);
-	size_t volume_size = (int)whole_data_len.x * (int)whole_data_len.y * (int)whole_data_len.z * sizeof(unsigned char);
-	int subW, subH, subD;
+	uint64_t endX = b.x ;
+	uint64_t endY = b.y;
+	uint64_t endZ = b.z;
+	// std::cout << "[master_load_data]::MASTER: [ ================= 1111111" << std::endl;
+	uint64_t local_volume_size = (endX - startX + 1) * (endY - startY + 1) * (endZ - startZ + 1) * sizeof(unsigned char);
+	// std::cout << "[master_load_data]::MASTER: [ ================= 2222222" << std::endl;
+	uint64_t volume_size = (uint64_t)whole_data_len.x * (uint64_t)whole_data_len.y * (uint64_t)whole_data_len.z * sizeof(unsigned char);
+	// std::cout << "[master_load_data]::MASTER: [ ================= 3333333" << std::endl;
+	uint64_t subW, subH, subD;
+	// std::cout << "[master_load_data]::MASTER: [ ================= bbbbbbbbb" << std::endl;
+	// std::cout << "jdklfjlaf\n";
 	//void* h_volume = FileManager::loadPartialRawFile2(s.c_str(), local_volume_size, startX, endX, startY, endY, startZ, endZ, volume_size);
-	void* h_volume = FileManager::loadRawFileSubVolume(s.c_str(), (int)whole_data_len.x, (int)whole_data_len.y, (int)whole_data_len.z, startX, endX, startY, endY, startZ, endZ, subW, subH, subD);
+	// std::cout << s.c_str() << " " << std::endl;
+	// std::cout << (uint64_t)whole_data_len.x << " " << (uint64_t)whole_data_len.y << " " << (uint64_t)whole_data_len.z << " " << std::endl;
+	// std::cout << startX << " " << endX << " " << startY << " " << endY << " " << startZ << " " << endZ << std::endl;
+	// std::cout << "done =============\n"; std::cout << std::flush;
+	void* h_volume = FileManager::loadRawFileSubVolume(s, (uint64_t)whole_data_len.x, (uint64_t)whole_data_len.y, (uint64_t)whole_data_len.z, startX, endX, startY, endY, startZ, endZ, subW, subH, subD);
+	// std::cout << "[master_load_data]::MASTER: [ ================= 4444444" << std::endl;
 	memcpy(this->data, h_volume, local_volume_size);
+	// std::cout << "[master_load_data]::MASTER: [ ================= 55555" << std::endl;
 }
 
 void Processor::initKDTree()
@@ -2563,6 +2560,10 @@ void Processor::initImage(int w, int h)
 	// init cuda compression stream
 	cudaStreamCreate(&stream);
 	getLastCudaError("init stream failed");
+	cudaMalloc((void**)&d_cmpBytes, sizeof(float) * rgb_size); 
+	getLastCudaError("cudaMalloc d_cmpBytes failed");
+	cudaMalloc(&d_decData, rgb_size * sizeof(float));
+	cudaMalloc(&receivedCompressedBytes, rgb_size * sizeof(float));
 }
 
 
@@ -2574,12 +2575,14 @@ void Processor::initData(const char* filename)
 	int ds = data_size(); //获取每个进程要计算的 数据大小 // 更新了 a b ，大小用的是data_a data_b
 	this->data = new unsigned char[ds];
 	this->data_len = ds;
-	std::cout << "[init_data]:: PID [ " << Processor_ID << " ] data size " << ds <<
-		" [ " << a.x << " , " << a.y << " , " << a.z <<
-		" ] -> [ " << b.x << " , " << b.y << " , " << b.z << " ] " << " " <<
-		" [ " << data_a.x << " , " << data_a.y << " , " << data_a.z <<
-		" ] -> [ " << data_b.x << " , " << data_b.y << " , " << data_b.z << " ] " << std::endl;
+	// std::cout << "[init_data]:: PID [ " << Processor_ID << " ] data size " << ds <<
+	// 	" [ " << a.x << " , " << a.y << " , " << a.z <<
+	// 	" ] -> [ " << b.x << " , " << b.y << " , " << b.z << " ] " << " " <<
+	// 	" [ " << data_a.x << " , " << data_a.y << " , " << data_a.z <<
+	// 	" ] -> [ " << data_b.x << " , " << data_b.y << " , " << data_b.z << " ] " << std::endl;
 
+	// std::cout << "[init_data]:: PID [ " << Processor_ID << " ] data size " << ds << std::endl;	
+	
 	//主节点逐步读取子数据并发送给从节点
 	if (Processor_ID == 0)
 	{
@@ -2603,7 +2606,7 @@ void Processor::initData(const char* filename)
 				sizeof(unsigned char);
 
 			this->data = new unsigned char[ds];
-
+			// std::cout << "[init_data]:: PID [ " << Processor_ID << " ] data loading ===== " << ds << std::endl;	
 			master_load_data(node_a, node_b, std::string(filename));
 
 			// 使用 MPI_Send 发送 ds

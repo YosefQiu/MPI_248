@@ -91,6 +91,7 @@ public:
 	size_t pad_nbEle;
 	int blockSize = 64;
 	unsigned char* d_cmpBytes;
+	unsigned char* receivedCompressedBytes;
 	float* d_decData;
 	float* d_paddedData;
 	cudaStream_t stream;
