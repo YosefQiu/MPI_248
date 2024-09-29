@@ -318,6 +318,42 @@ __global__ void gather_merge(float* d_sub_fbuffer, float* d_obr_rgb,
 	}
 }
 
+
+__global__ void gather_fileRGBABuffer(float* d_img, float* d_fbuffer, int obr_x, int obr_y, Point2Di fa, Point2Di fb)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x + fa.x;
+	int y = blockIdx.y * blockDim.y + threadIdx.y + fa.y;
+
+	if (x >= fa.x && x <= fb.x && y >= fa.y && y <= fb.y) 
+	{
+		int pixelIndex = (y * obr_x + x) * 4; // 每个像素有4个值 (RGBA)
+        int bufferIndex = ((y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x)) * 4 + 4; // 为每个像素存储4个值
+
+        d_fbuffer[bufferIndex + 0] = d_img[pixelIndex + 0]; // R
+        d_fbuffer[bufferIndex + 1] = d_img[pixelIndex + 1]; // G
+        d_fbuffer[bufferIndex + 2] = d_img[pixelIndex + 2]; // B
+        d_fbuffer[bufferIndex + 3] = d_img[pixelIndex + 3]; // A
+	}
+}
+
+__global__ void gather_mergeRGBA(float* d_sub_buffer, float* d_obr_rgba, Point2Di fa, Point2Di fb, int obr_x)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x + fa.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y + fa.y;
+
+    if (x <= fb.x && y <= fb.y) 
+    {
+        int pixelIndex = (y * obr_x + x) * 4;  // 当前像素在 d_obr_rgba 中的索引，4 表示 RGBA 4 个分量
+        int bufferIndex = ((y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x)) * 4 + 4;  // 当前像素在 d_sub_buffer 中的索引
+
+        // 将 d_sub_buffer 中的 RGBA 分量合并到 d_obr_rgba 中
+        d_obr_rgba[pixelIndex + 0] = d_sub_buffer[bufferIndex + 0]; // R
+        d_obr_rgba[pixelIndex + 1] = d_sub_buffer[bufferIndex + 1]; // G
+        d_obr_rgba[pixelIndex + 2] = d_sub_buffer[bufferIndex + 2]; // B
+        d_obr_rgba[pixelIndex + 3] = d_sub_buffer[bufferIndex + 3]; // A
+    }
+}
+
 void Processor::init_node(float3& a, float3& b, int id)
 {
 	int r[3];
@@ -648,8 +684,8 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 	gather_time_s = MPI_Wtime();
 
 	// 拷贝回CPU
-	obr = new float[obr_x * obr_y * 4];
-	cudaMemcpy(obr, d_obr_rgba, obr_x * obr_y * 4 * sizeof(float), cudaMemcpyDeviceToHost);
+	// obr = new float[obr_x * obr_y * 4];
+	// cudaMemcpy(obr, d_obr_rgba, obr_x * obr_y * 4 * sizeof(float), cudaMemcpyDeviceToHost);
 
 #if GATHERING_IMAGE == 0
 	/* PART II - Final Image Gathering */
@@ -741,60 +777,96 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 	int sendHeight = std::abs(obr_b.y - obr_a.y) + 1;
 	int bufsize = sendWidth * sendHeight * 4 + 4; // +4 用于存储元数据
 	float* fbuffer = new float[bufsize];
-
-	// 填充 fbuffer
-	fbuffer[0] = obr_a.x;
-	fbuffer[1] = obr_a.y;
-	fbuffer[2] = obr_b.x;
-	fbuffer[3] = obr_b.y;
-
-	int index = 4; // 前4个字节存储元数据
-	for (int j = obr_a.y; j <= obr_b.y; j++) 
-	{
-		for (int i = obr_a.x; i <= obr_b.x; i++) 
-		{
-			int pixelIndex = (j * obr_x + i) * 4;
-
-			// 从 obr 数组中读取 RGBA 分量
-			float r_float = obr[pixelIndex + 0];
-			float g_float = obr[pixelIndex + 1];
-			float b_float = obr[pixelIndex + 2];
-			float a_float = obr[pixelIndex + 3];
-
-			// 存储到 fbuffer 中
-			fbuffer[index++] = r_float;
-			fbuffer[index++] = g_float;
-			fbuffer[index++] = b_float;
-			fbuffer[index++] = a_float;
-		}
-	}
-
+	float* d_fbuffer = nullptr;
+	cudaMalloc(&d_fbuffer, bufsize * sizeof(float));
 	// 进程 0 分配接收缓冲区
-	float* recvbuf = nullptr;
+	float* d_recvbuf = nullptr;
 	int* recvcounts = nullptr;
 	int* displs = nullptr;
-
-	if(Processor_ID == 0)
+	if (Processor_ID == 0) 
 	{
+		// 为每个进程分配接收缓冲区
 		recvcounts = new int[Processor_Size];
 		displs = new int[Processor_Size];
-		// 设置所有 recvcounts 为 fixed_bufsize
+	
+		// 设置每个进程的 recvcounts 和 displs
 		for (int i = 0; i < Processor_Size; i++) 
 		{
 			recvcounts[i] = bufsize;
+			displs[i] = i * bufsize; // 每个进程的数据按顺序排列
+			// std::cout << "[GATHER]:: PID " << Processor_ID << " recvcounts " << recvcounts[i] << " displs " << displs[i] << std::endl;
 		}
 	
-		displs[0] = 0;
-		int i = 0;
-		std::cout << "recvcounts[" << i << "] = " << recvcounts[0] << " displs[" << i << "] = " << displs[i] << std::endl;
-		for (int i = 1; i < Processor_Size; i++) 
-		{
-			displs[i] = displs[i - 1] + recvcounts[i - 1];
-			std::cout << "recvcounts[" << i << "] = " << recvcounts[i] << " displs[" << i << "] = " << displs[i] << std::endl;
-		}
-		int totalSize = displs[Processor_Size - 1] + recvcounts[Processor_Size - 1];
-		recvbuf = new float[totalSize];
+		// 分配总接收缓冲区
+		cudaMalloc(&d_recvbuf, Processor_Size * bufsize * sizeof(float));
 	}
+
+	// 填充 fbuffer 前4个字节存储元数据
+	Point2Di fa, fb;
+	cudaMemcpy(&d_fbuffer[0], &obr_a.x, sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(&d_fbuffer[1], &obr_a.y, sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(&d_fbuffer[2], &obr_b.x, sizeof(float), cudaMemcpyHostToDevice);
+	cudaMemcpy(&d_fbuffer[3], &obr_b.y, sizeof(float), cudaMemcpyHostToDevice);
+	fa.x = obr_a.x; fa.y = obr_a.y; 
+	fb.x = obr_b.x; fb.y = obr_b.y;
+	blockDim = dim3(16, 16);
+	gridDim = dim3((obr_b.x - obr_a.x + 1 + blockDim.x - 1) / blockDim.x, 
+				(obr_b.y - obr_a.y + 1 + blockDim.y - 1) / blockDim.y);
+	gather_fileRGBABuffer<<<gridDim, blockDim>>>(d_obr_rgba, d_fbuffer, obr_x, obr_y, fa, fb);
+	cudaDeviceSynchronize();
+	getLastCudaError("gather_fileRGBABuffer kernel failed");
+	// fbuffer[0] = obr_a.x;
+	// fbuffer[1] = obr_a.y;
+	// fbuffer[2] = obr_b.x;
+	// fbuffer[3] = obr_b.y;
+
+	// int index = 4; // 前4个字节存储元数据
+	// for (int j = obr_a.y; j <= obr_b.y; j++) 
+	// {
+	// 	for (int i = obr_a.x; i <= obr_b.x; i++) 
+	// 	{
+	// 		int pixelIndex = (j * obr_x + i) * 4;
+
+	// 		// 从 obr 数组中读取 RGBA 分量
+	// 		float r_float = obr[pixelIndex + 0];
+	// 		float g_float = obr[pixelIndex + 1];
+	// 		float b_float = obr[pixelIndex + 2];
+	// 		float a_float = obr[pixelIndex + 3];
+
+	// 		// 存储到 fbuffer 中
+	// 		fbuffer[index++] = r_float;
+	// 		fbuffer[index++] = g_float;
+	// 		fbuffer[index++] = b_float;
+	// 		fbuffer[index++] = a_float;
+	// 	}
+	// }
+
+	// // 进程 0 分配接收缓冲区
+	// float* recvbuf = nullptr;
+	// int* recvcounts = nullptr;
+	// int* displs = nullptr;
+
+	// if(Processor_ID == 0)
+	// {
+	// 	recvcounts = new int[Processor_Size];
+	// 	displs = new int[Processor_Size];
+	// 	// 设置所有 recvcounts 为 fixed_bufsize
+	// 	for (int i = 0; i < Processor_Size; i++) 
+	// 	{
+	// 		recvcounts[i] = bufsize;
+	// 	}
+	
+	// 	displs[0] = 0;
+	// 	int i = 0;
+	// 	std::cout << "recvcounts[" << i << "] = " << recvcounts[0] << " displs[" << i << "] = " << displs[i] << std::endl;
+	// 	for (int i = 1; i < Processor_Size; i++) 
+	// 	{
+	// 		displs[i] = displs[i - 1] + recvcounts[i - 1];
+	// 		std::cout << "recvcounts[" << i << "] = " << recvcounts[i] << " displs[" << i << "] = " << displs[i] << std::endl;
+	// 	}
+	// 	int totalSize = displs[Processor_Size - 1] + recvcounts[Processor_Size - 1];
+	// 	recvbuf = new float[totalSize];
+	// }
 	MPI_Barrier(MPI_COMM_WORLD);
 	bf_gather_e = MPI_Wtime();
 	bf_gather = (bf_gather_e - bf_gather_s) * 1000.0f;
@@ -803,47 +875,65 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 		std::cout << "Before Gather Time: " << bf_gather << std::endl;
 	}
 	// 使用 MPI_Gatherv 收集每个进程的数据
-	MPI_Gatherv(fbuffer, bufsize, MPI_FLOAT, recvbuf, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
+	MPI_Gatherv(d_fbuffer, bufsize, MPI_FLOAT, d_recvbuf, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
 	// 进程 0 合并图像
 	if (Processor_ID == 0) 
 	{
-		for (int u = 1; u < Processor_Size; u++) 
+		for (int u = 0; u < Processor_Size; u++) 
 		{
-			float* fbufferRecv = recvbuf + displs[u];
+			int offset = displs[u];
+			float* d_fbufferRecv = nullptr;
+			cudaMalloc(&d_fbufferRecv, bufsize * sizeof(float));
+			cudaMemcpy(d_fbufferRecv, d_recvbuf + offset, bufsize * sizeof(float), cudaMemcpyDeviceToDevice);
 			Point2Di fa, fb;
-			fa.x = static_cast<int>(fbufferRecv[0]);
-			fa.y = static_cast<int>(fbufferRecv[1]);
-			fb.x = static_cast<int>(fbufferRecv[2]);
-			fb.y = static_cast<int>(fbufferRecv[3]);
+			cudaMemcpy(&fa.x, &d_recvbuf[offset + 0], sizeof(float), cudaMemcpyDeviceToHost);
+    		cudaMemcpy(&fa.y, &d_recvbuf[offset + 1], sizeof(float), cudaMemcpyDeviceToHost);
+    		cudaMemcpy(&fb.x, &d_recvbuf[offset + 2], sizeof(float), cudaMemcpyDeviceToHost);
+    		cudaMemcpy(&fb.y, &d_recvbuf[offset + 3], sizeof(float), cudaMemcpyDeviceToHost);
+			// std::cout << "fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
+			blockDim = dim3(16, 16);
+			gridDim = dim3((fb.x - fa.x + 1 + blockDim.x - 1) / blockDim.x, 
+						(fb.y - fa.y + 1 + blockDim.y - 1) / blockDim.y);
+			gather_mergeRGBA<<<gridDim, blockDim>>>(d_fbufferRecv, d_obr_rgba, fa, fb, obr_x);
+			cudaDeviceSynchronize();
+			getLastCudaError("gather_mergeRGBA kernel failed");
+			// float* fbufferRecv = recvbuf + displs[u];
+			// Point2Di fa, fb;
+			// fa.x = static_cast<int>(fbufferRecv[0]);
+			// fa.y = static_cast<int>(fbufferRecv[1]);
+			// fb.x = static_cast<int>(fbufferRecv[2]);
+			// fb.y = static_cast<int>(fbufferRecv[3]);
 
-			int index = 4;
-			for (int j = fa.y; j <= fb.y; j++) {
-				for (int i = fa.x; i <= fb.x; i++) {
-					int pixelIndex = (j * obr_x + i) * 4;
+			// int index = 4;
+			// for (int j = fa.y; j <= fb.y; j++) {
+			// 	for (int i = fa.x; i <= fb.x; i++) {
+			// 		int pixelIndex = (j * obr_x + i) * 4;
 
-					// 从 fbufferRecv 中读取 RGBA 并存入 obr 数组
-					obr[pixelIndex + 0] = fbufferRecv[index++];
-					obr[pixelIndex + 1] = fbufferRecv[index++];
-					obr[pixelIndex + 2] = fbufferRecv[index++];
-					obr[pixelIndex + 3] = fbufferRecv[index++];
-				}
-			}
+			// 		// 从 fbufferRecv 中读取 RGBA 并存入 obr 数组
+			// 		obr[pixelIndex + 0] = fbufferRecv[index++];
+			// 		obr[pixelIndex + 1] = fbufferRecv[index++];
+			// 		obr[pixelIndex + 2] = fbufferRecv[index++];
+			// 		obr[pixelIndex + 3] = fbufferRecv[index++];
+			// 	}
+			// }
 		}
 	}
 
 	// 清理内存
-	if (fbuffer) { delete[] fbuffer; }
+	// if (fbuffer) { delete[] fbuffer; }
 	if (Processor_ID == 0) {
 		delete[] recvcounts;
 		delete[] displs;
-		delete[] recvbuf;
+		
 	}
 #endif
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	gather_time_e = MPI_Wtime();
 	gather_time = (gather_time_e - gather_time_s) * 1000.0f;
+	obr = new float[obr_x * obr_y * 4];
+	cudaMemcpy(obr, d_obr_rgba, obr_x * obr_y * 4 * sizeof(float), cudaMemcpyDeviceToHost);
 	if (Processor_ID == 0)
 	{
 		Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather Time:", std::to_string(Processor_Size - 1), gather_time);
@@ -1759,9 +1849,9 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 
 	double gather_time_s, gather_time_e, gather_time_total;
 	double before_gather_s, before_gather_e, before_gather_total;
-	
-	obr_rgb = new float[obr_x * obr_y * 3];
-	cudaMemcpy(obr_rgb, d_obr_rgb, obr_x * obr_y * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+	double after_gather_s, after_gather_e, after_gather_total;
+	// obr_rgb = new float[obr_x * obr_y * 3];
+	// cudaMemcpy(obr_rgb, d_obr_rgb, obr_x * obr_y * 3 * sizeof(float), cudaMemcpyDeviceToHost);
 	MPI_Barrier(MPI_COMM_WORLD);
 	gather_time_s = MPI_Wtime();
 // #if GPU_WAY == 1
@@ -1853,19 +1943,15 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	before_gather_s = MPI_Wtime();
-
 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
 	obr_rgb_b.x = area_b.x; obr_rgb_b.y = area_b.y;
 	uint64_t sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
 	uint64_t sendHeight = std::abs(obr_rgb_b.y - obr_rgb_a.y) + 1;
 	uint64_t bufsize = sendWidth * sendHeight * 3;
 	bufsize += 4;
-	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
 	float* d_fbuffer = nullptr;
 	cudaMalloc(&d_fbuffer, bufsize * sizeof(float));
-	std::cout << "[GATHER]:: PID " << Processor_ID << " bufsize " << bufsize << std::endl;
 	// 进程 0 分配接收缓冲区
-	float* recvbuf = nullptr;
 	float* d_recvbuf = nullptr;
 	int* recvcounts = nullptr;
 	int* displs = nullptr;
@@ -1880,11 +1966,10 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 		{
 			recvcounts[i] = bufsize;
 			displs[i] = i * bufsize; // 每个进程的数据按顺序排列
-			std::cout << "[GATHER]:: PID " << Processor_ID << " recvcounts " << recvcounts[i] << " displs " << displs[i] << std::endl;
+			// std::cout << "[GATHER]:: PID " << Processor_ID << " recvcounts " << recvcounts[i] << " displs " << displs[i] << std::endl;
 		}
 	
 		// 分配总接收缓冲区
-		recvbuf = new float[Processor_Size * bufsize];
 		cudaMalloc(&d_recvbuf, Processor_Size * bufsize * sizeof(float));
 	}
 	
@@ -1900,7 +1985,6 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	int bOffset_fbuffer = 4 + total_fbuffer_Pixels * 2; 	// B 通道从 2 * total_fbuffer_Pixels 开始
 
 	// 所有进程填充自己的 fbuffer 数据，包括进程 0
-
 	dim3 blockDim(16, 16);
 	dim3 gridDim((obr_rgb_b.x - obr_rgb_a.x + 1 + blockDim.x - 1) / blockDim.x, 
 				(obr_rgb_b.y - obr_rgb_a.y + 1 + blockDim.y - 1) / blockDim.y);
@@ -1918,31 +2002,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	cudaDeviceSynchronize();
 	getLastCudaError("gather_fillRGBBuffer failed");
 	
-	fbuffer[0] = (float)obr_rgb_a.x; 
-	fbuffer[1] = (float)obr_rgb_a.y; 
-	fbuffer[2] = (float)obr_rgb_b.x; 
-	fbuffer[3] = (float)obr_rgb_b.y;
-	// std::cout << "[GATHER]:: PID " << Processor_ID << " fbuffer " << fbuffer[0] << " " << fbuffer[1] << " " << fbuffer[2] << " " << fbuffer[3] << std::endl;
-
-	int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
-	for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) 
-	{
-		for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) 
-		{
-			int pixelIndex = (j * obr_x + i) * 1;
-
-			// 从 color 数组中读取 RGB 分量
-			float r_float = obr_rgb[rOffset_obr + pixelIndex];
-			float g_float = obr_rgb[gOffset_obr + pixelIndex];
-			float b_float = obr_rgb[bOffset_obr + pixelIndex];
-
-			// 将RGB分量存储到 fbuffer 中
-			fbuffer[index++] = r_float;
-			fbuffer[index++] = g_float;
-			fbuffer[index++] = b_float;
-		}
-	}
-
+	
 	MPI_Barrier(MPI_COMM_WORLD);
 	before_gather_e = MPI_Wtime();
 	before_gather_total = 0.0f;
@@ -1951,6 +2011,8 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	{
 		std::cout << "before gather Time: " << before_gather_total << std::endl;
 	}
+	MPI_Barrier(MPI_COMM_WORLD);
+	after_gather_s = MPI_Wtime();
 
 	// 使用 MPI_Gatherv 收集每个进程的数据到进程 0
 	MPI_Gatherv(d_fbuffer, bufsize, MPI_FLOAT, d_recvbuf, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
@@ -1968,51 +2030,27 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
     		cudaMemcpy(&fa.y, &d_recvbuf[offset + 1], sizeof(float), cudaMemcpyDeviceToHost);
     		cudaMemcpy(&fb.x, &d_recvbuf[offset + 2], sizeof(float), cudaMemcpyDeviceToHost);
     		cudaMemcpy(&fb.y, &d_recvbuf[offset + 3], sizeof(float), cudaMemcpyDeviceToHost);
-			std::cout << "fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
+			// std::cout << "fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
 			blockDim = dim3(16, 16);
 			gridDim = dim3((fb.x - fa.x + 1 + blockDim.x - 1) / blockDim.x, 
 						(fb.y - fa.y + 1 + blockDim.y - 1) / blockDim.y);
-			// std::cout << "gridDim " << gridDim.x << " " << gridDim.y << std::endl;
-			// std::cout << "offset " << rOffset_obr << " " << gOffset_obr << " " << bOffset_obr << std::endl;
-			// std::cout << "obr_x " << obr_x << " obr_y " << obr_y << std::endl;
 			gather_merge<<<gridDim, blockDim>>>(d_fbufferRecv, d_obr_rgb, rOffset_obr, gOffset_obr, bOffset_obr, fa, fb, obr_x);
 			cudaDeviceSynchronize();
 			getLastCudaError("gather_merge failed");
-
-			
-
-			// float* fbufferRecv = recvbuf + displs[u];
-			// Point2Di fa, fb;
-			
-			// fa.x = (int)fbufferRecv[0];
-			// fa.y = (int)fbufferRecv[1];
-			// fb.x = (int)fbufferRecv[2];
-			// fb.y = (int)fbufferRecv[3];
-			
-			// // std::cout << "in loop fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
-
-			// int index = 4;
-
-			// for (int j = fa.y; j <= fb.y; j++)
-			// {
-			// 	for (int i = fa.x; i <= fb.x; i++)
-			// 	{
-			// 		int pixelIndex = (j * obr_x + i) * 1;
-			// 		float r = fbufferRecv[index++];
-			// 		float g = fbufferRecv[index++];
-			// 		float b = fbufferRecv[index++];
-
-			// 		obr_rgb[rOffset_obr + pixelIndex] = r;
-			// 		obr_rgb[gOffset_obr + pixelIndex] = g;
-			// 		obr_rgb[bOffset_obr + pixelIndex] = b;
-			// 	}
-			// }
 
 			rgba_totalSentBytes += bufsize * sizeof(float);
 		}
 
 	}
 #endif
+	MPI_Barrier(MPI_COMM_WORLD);
+	after_gather_e = MPI_Wtime();
+	after_gather_total = 0.0f;
+	after_gather_total = (after_gather_e - after_gather_s) * 1000.0f;
+	if (Processor_ID == 0)
+	{
+		std::cout << "after gather Time: " << after_gather_total << std::endl;
+	}
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	gather_time_e = MPI_Wtime();
@@ -2022,7 +2060,7 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	{
 		Utils::recordCudaRenderTime(save_time_file_path.c_str(),  "gather Time:", std::to_string(Processor_Size - 1), gather_time_total);
 	}
-	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
+	
 	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COMPOSITING " << std::endl;
 
 	obr_rgb = new float[obr_x * obr_y * 3];
