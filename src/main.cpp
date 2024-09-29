@@ -108,7 +108,7 @@ int main(int argc, char* argv[])
 	p->initKDTree();
 	p->initImage(image_width, image_height);
 	p->initData(volumeFilename.c_str());
-	std::cout << "doned init data\n";
+	// std::cout << "doned init data\n";
 	p->initOpti(); // cam_dx = cam_dy = 0.0
 	p->setCameraProperty(dx, dy, dz);
 

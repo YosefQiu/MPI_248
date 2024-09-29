@@ -3,6 +3,7 @@
 #include "Utils.h"
 
 #define GATHERING_IMAGE 1
+#define USE_GATHER 1
 
 __global__ void fillSendBuffer(float* d_img_alpha, float* d_alpha_sbuffer, Point2Di sa, Point2Di sb, int obr_x) 
 {
@@ -266,6 +267,55 @@ __global__ void compositingRGBAKernel(float* d_img, float* d_rbuffer, Point2Di r
         d_img[pixelIndex + 2] = b_float;
         d_img[pixelIndex + 3] = a_float;
 	}
+}
+
+__global__ void gather_fillRGBBuffer(float* d_img, float* d_fbuffer, int obr_x, int obr_y, 
+			int rOffset_obr, int gOffset_obr, int bOffset_obr, 
+			int rOffset_fbuffer, int gOffset_fbuffer, int bOffset_fbuffer,
+			Point2Di fa, Point2Di fb)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x + fa.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y + fa.y;
+
+	// if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
+    //     d_fbuffer[0] = fa.x;
+    //     d_fbuffer[1] = fa.y;
+    //     d_fbuffer[2] = fb.x;
+    //     d_fbuffer[3] = fb.y;
+    // }
+
+	if(x >= fa.x && x <= fb.x && y >= fa.y && y <= fb.y)
+	{
+		int pixelIndex = y * obr_x + x;
+		int localIndex = (y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x);
+
+		float r = d_img[rOffset_obr + pixelIndex];
+        float g = d_img[gOffset_obr + pixelIndex];
+        float b = d_img[bOffset_obr + pixelIndex];
+
+		// 按照 rrrgggbbb 的顺序存储到 d_fbuffer 中
+        d_fbuffer[rOffset_fbuffer + localIndex + 4] = r;
+        d_fbuffer[gOffset_fbuffer + localIndex + 4] = g;
+        d_fbuffer[bOffset_fbuffer + localIndex + 4] = b;
+	}
+}
+
+__global__ void gather_merge(float* d_sub_fbuffer, float* d_obr_rgb, 
+			int rOffset_obr, int gOffset_obr, int bOffset_obr, 
+			Point2Di fa, Point2Di fb, int obr_x)
+{
+	int x = blockIdx.x * blockDim.x + threadIdx.x + fa.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y + fa.y;
+	// if (x <= fb.x && y <= fb.y) 
+	// {
+    //     int local_idx = (y - fa.y) * (fb.x - fa.x + 1) + (x - fa.x);  // 当前像素在 sub_fbuffer 中的索引
+    //     int pixelIndex = y * obr_x + x;  // 当前像素在 obr_rgb 中的索引
+
+	// 	// 合并 R, G, B 数据
+    //     d_obr_rgb[rOffset_obr + pixelIndex] = d_sub_fbuffer[local_idx];
+    //     d_obr_rgb[gOffset_obr + pixelIndex] = d_sub_fbuffer[local_idx + (fb.x - fa.x + 1) * (fb.y - fa.y + 1)];
+    //     d_obr_rgb[bOffset_obr + pixelIndex] = d_sub_fbuffer[local_idx + 2 * (fb.x - fa.x + 1) * (fb.y - fa.y + 1)];
+	// }
 }
 
 void Processor::init_node(float3& a, float3& b, int id)
@@ -590,6 +640,7 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 		}
 		
 	}
+	std::cout << "[binarySwap_RGB_GPU]:: PID " << Processor_ID << " Finished BINARY SWAP " << std::endl;
 
 	double gather_time_s, gather_time_e, gather_time;
 
@@ -600,7 +651,7 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 	obr = new float[obr_x * obr_y * 4];
 	cudaMemcpy(obr, d_obr_rgba, obr_x * obr_y * 4 * sizeof(float), cudaMemcpyDeviceToHost);
 
-#if GATHERING_IMAGE == 1
+#if GATHERING_IMAGE == 0
 	/* PART II - Final Image Gathering */
 	// 计算缓冲区大小
 	int sendWidth = std::abs(obr_b.x - obr_a.x) + 1;
@@ -677,6 +728,117 @@ void Processor::binarySwap_GPU(float* imgColor, float* imageAlpha)
 	}
 	if (fbuffer) { delete[] fbuffer; fbuffer = nullptr; }
 	std::cout << "PID [ " << Processor_ID << " ] finished IMAGE COMPOSITING " << std::endl;
+#endif
+
+#if USE_GATHER == 1
+	double bf_gather_s, bf_gather_e, bf_gather;
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	bf_gather_s = MPI_Wtime();
+	/* PART II - Final Image Gathering */
+	// 计算每个进程的缓冲区大小
+	int sendWidth = std::abs(obr_b.x - obr_a.x) + 1;
+	int sendHeight = std::abs(obr_b.y - obr_a.y) + 1;
+	int bufsize = sendWidth * sendHeight * 4 + 4; // +4 用于存储元数据
+	float* fbuffer = new float[bufsize];
+
+	// 填充 fbuffer
+	fbuffer[0] = obr_a.x;
+	fbuffer[1] = obr_a.y;
+	fbuffer[2] = obr_b.x;
+	fbuffer[3] = obr_b.y;
+
+	int index = 4; // 前4个字节存储元数据
+	for (int j = obr_a.y; j <= obr_b.y; j++) 
+	{
+		for (int i = obr_a.x; i <= obr_b.x; i++) 
+		{
+			int pixelIndex = (j * obr_x + i) * 4;
+
+			// 从 obr 数组中读取 RGBA 分量
+			float r_float = obr[pixelIndex + 0];
+			float g_float = obr[pixelIndex + 1];
+			float b_float = obr[pixelIndex + 2];
+			float a_float = obr[pixelIndex + 3];
+
+			// 存储到 fbuffer 中
+			fbuffer[index++] = r_float;
+			fbuffer[index++] = g_float;
+			fbuffer[index++] = b_float;
+			fbuffer[index++] = a_float;
+		}
+	}
+
+	// 进程 0 分配接收缓冲区
+	float* recvbuf = nullptr;
+	int* recvcounts = nullptr;
+	int* displs = nullptr;
+
+	if(Processor_ID == 0)
+	{
+		recvcounts = new int[Processor_Size];
+		displs = new int[Processor_Size];
+		// 设置所有 recvcounts 为 fixed_bufsize
+		for (int i = 0; i < Processor_Size; i++) 
+		{
+			recvcounts[i] = bufsize;
+		}
+	
+		displs[0] = 0;
+		int i = 0;
+		std::cout << "recvcounts[" << i << "] = " << recvcounts[0] << " displs[" << i << "] = " << displs[i] << std::endl;
+		for (int i = 1; i < Processor_Size; i++) 
+		{
+			displs[i] = displs[i - 1] + recvcounts[i - 1];
+			std::cout << "recvcounts[" << i << "] = " << recvcounts[i] << " displs[" << i << "] = " << displs[i] << std::endl;
+		}
+		int totalSize = displs[Processor_Size - 1] + recvcounts[Processor_Size - 1];
+		recvbuf = new float[totalSize];
+	}
+	MPI_Barrier(MPI_COMM_WORLD);
+	bf_gather_e = MPI_Wtime();
+	bf_gather = (bf_gather_e - bf_gather_s) * 1000.0f;
+	if (Processor_ID == 0)
+	{
+		std::cout << "Before Gather Time: " << bf_gather << std::endl;
+	}
+	// 使用 MPI_Gatherv 收集每个进程的数据
+	MPI_Gatherv(fbuffer, bufsize, MPI_FLOAT, recvbuf, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
+
+	// 进程 0 合并图像
+	if (Processor_ID == 0) 
+	{
+		for (int u = 1; u < Processor_Size; u++) 
+		{
+			float* fbufferRecv = recvbuf + displs[u];
+			Point2Di fa, fb;
+			fa.x = static_cast<int>(fbufferRecv[0]);
+			fa.y = static_cast<int>(fbufferRecv[1]);
+			fb.x = static_cast<int>(fbufferRecv[2]);
+			fb.y = static_cast<int>(fbufferRecv[3]);
+
+			int index = 4;
+			for (int j = fa.y; j <= fb.y; j++) {
+				for (int i = fa.x; i <= fb.x; i++) {
+					int pixelIndex = (j * obr_x + i) * 4;
+
+					// 从 fbufferRecv 中读取 RGBA 并存入 obr 数组
+					obr[pixelIndex + 0] = fbufferRecv[index++];
+					obr[pixelIndex + 1] = fbufferRecv[index++];
+					obr[pixelIndex + 2] = fbufferRecv[index++];
+					obr[pixelIndex + 3] = fbufferRecv[index++];
+				}
+			}
+		}
+	}
+
+	// 清理内存
+	if (fbuffer) { delete[] fbuffer; }
+	if (Processor_ID == 0) {
+		delete[] recvcounts;
+		delete[] displs;
+		delete[] recvbuf;
+	}
 #endif
 
 	MPI_Barrier(MPI_COMM_WORLD);
@@ -1205,7 +1367,7 @@ void Processor::binarySwap_RGB(float* img_color, int MinX, int MinY, int MaxX, i
 		if (fbuffer) { delete[] fbuffer; }
 		if (recvbuf) { delete[] recvbuf; }
 	}
-	else if(bUseCompression == ture)
+	else if(bUseCompression == true)
 	{
 		// 压缩数据
 		size_t outSize;
@@ -1596,38 +1758,238 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 	}
 
 	double gather_time_s, gather_time_e, gather_time_total;
-	
+	double before_gather_s, before_gather_e, before_gather_total;
 	
 	obr_rgb = new float[obr_x * obr_y * 3];
 	cudaMemcpy(obr_rgb, d_obr_rgb, obr_x * obr_y * 3 * sizeof(float), cudaMemcpyDeviceToHost);
 	MPI_Barrier(MPI_COMM_WORLD);
 	gather_time_s = MPI_Wtime();
-	// 方法二
+// #if GPU_WAY == 1
+// 	// 方法二
+// 	/* PART II - Final Image Gathering */
+// 	// 计算缓冲区大小
+// 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
+// 	obr_rgb_b.x = area_b.x; obr_rgb_b.y = area_b.y;
+// 	int sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
+// 	int sendHeight = std::abs(obr_rgb_b.y - obr_rgb_a.y) + 1;
+// 	int bufsize = sendWidth * sendHeight * 3;
+// 	bufsize += 4;
+// 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
+	
+// 	// R, G, B 通道在 obr_rgb 中的起始偏移量
+// 	int totalPixels = obr_x * obr_y;
+// 	int rOffset_obr = 0;                      // R 通道从 0 开始
+// 	int gOffset_obr = totalPixels;            // G 通道从 totalPixels 开始
+// 	int bOffset_obr = totalPixels * 2;        // B 通道从 2 * totalPixels 开始 
+
+// 	if (Processor_ID == 0)
+// 	{
+// 		for (u = 1; u < this->Processor_Size; u++)
+// 		{
+			
+// 			MPI_Recv(&fbuffer[0], bufsize, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &Processor_status);
+// 			Point2Di fa, fb;
+// 			fa.x = (int)fbuffer[0]; fa.y = (int)fbuffer[1]; fb.x = (int)fbuffer[2]; fb.y = (int)fbuffer[3];
+			
+// 			int index = 4;
+
+// 			for (int j = fa.y; j <= fb.y; j++)
+// 			{
+// 				for (int i = fa.x; i <= fb.x; i++)
+// 				{
+// 					int pixelIndex = (j * obr_x + i) * 1;
+// 					float r = fbuffer[index++];
+// 					float g = fbuffer[index++];
+// 					float b = fbuffer[index++];
+
+// 					// 将解压后的 R, G, B 数据存储到 obr_rgb 中
+// 					obr_rgb[rOffset_obr + pixelIndex] = r;
+// 					obr_rgb[gOffset_obr + pixelIndex] = g;
+// 					obr_rgb[bOffset_obr + pixelIndex] = b;
+// 				}
+// 			}
+
+// 			rgba_totalSentBytes += bufsize * sizeof(float);
+// 		}
+
+// 		obr_a.x = 0; obr_a.y = 0;
+// 		obr_b.x = obr_x ; obr_b.y = obr_y;
+// 	}
+// 	else
+// 	{
+		
+// 		// 所有进程填充自己的 fbuffer 数据，包括进程 0
+// 		fbuffer[0] = obr_rgb_a.x; 
+// 		fbuffer[1] = obr_rgb_a.y; 
+// 		fbuffer[2] = obr_rgb_b.x; 
+// 		fbuffer[3] = obr_rgb_b.y;
+
+// 		int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
+// 		for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) 
+// 		{
+// 			for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) 
+// 			{
+// 				int pixelIndex = (j * obr_x + i) * 1;
+
+// 				// 从 color 数组中读取 RGB 分量
+// 				float r_float = obr_rgb[rOffset_obr + pixelIndex];
+// 				float g_float = obr_rgb[gOffset_obr + pixelIndex];
+// 				float b_float = obr_rgb[bOffset_obr + pixelIndex];
+
+// 				// 将RGB分量存储到 fbuffer 中
+// 				fbuffer[index++] = r_float;
+// 				fbuffer[index++] = g_float;
+// 				fbuffer[index++] = b_float;
+// 			}
+// 		}
+		
+// 		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
+// 	}
+// #endif 
+
+#if USE_GATHER == 1
 	/* PART II - Final Image Gathering */
 	// 计算缓冲区大小
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	before_gather_s = MPI_Wtime();
+
 	obr_rgb_a.x = arae_a.x; obr_rgb_a.y = arae_a.y;
 	obr_rgb_b.x = area_b.x; obr_rgb_b.y = area_b.y;
-	int sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
-	int sendHeight = std::abs(obr_rgb_b.y - obr_rgb_a.y) + 1;
-	int bufsize = sendWidth * sendHeight * 3;
+	uint64_t sendWidth = std::abs(obr_rgb_b.x - obr_rgb_a.x) + 1;
+	uint64_t sendHeight = std::abs(obr_rgb_b.y - obr_rgb_a.y) + 1;
+	std::cout << "[GATHER]:: PID " << Processor_ID << "obr_rgb_a " << obr_rgb_a.x << " " << obr_rgb_a.y << " obr_rgb_b " << obr_rgb_b.x << " " << obr_rgb_b.y << std::endl;
+	std::cout << "[GATHER]:: PID " << Processor_ID << " sendWidth " << sendWidth << " sendHeight " << sendHeight << std::endl;
+	uint64_t bufsize = sendWidth * sendHeight * 3;
 	bufsize += 4;
 	float* fbuffer = new float[bufsize];// 接收数据的缓冲区
+	float* d_fbuffer = nullptr;
+	cudaMalloc(&d_fbuffer, bufsize * sizeof(float));
+	std::cout << "[GATHER]:: PID " << Processor_ID << " bufsize " << bufsize << std::endl;
+	// 进程 0 分配接收缓冲区
+	float* recvbuf = nullptr;
+	float* d_recvbuf = nullptr;
+	int* recvcounts = nullptr;
+	int* displs = nullptr;
+	if (Processor_ID == 0) 
+	{
+		// 为每个进程分配接收缓冲区
+		recvcounts = new int[Processor_Size];
+		displs = new int[Processor_Size];
+	
+		// 设置每个进程的 recvcounts 和 displs
+		for (int i = 0; i < Processor_Size; i++) 
+		{
+			recvcounts[i] = bufsize;
+			displs[i] = i * bufsize; // 每个进程的数据按顺序排列
+			std::cout << "[GATHER]:: PID " << Processor_ID << " recvcounts " << recvcounts[i] << " displs " << displs[i] << std::endl;
+		}
+	
+		// 分配总接收缓冲区
+		recvbuf = new float[Processor_Size * bufsize];
+		// cudaMalloc(&d_recvbuf, Processor_Size * bufsize * sizeof(float));
+	}
 	
 	// R, G, B 通道在 obr_rgb 中的起始偏移量
 	int totalPixels = obr_x * obr_y;
 	int rOffset_obr = 0;                      // R 通道从 0 开始
 	int gOffset_obr = totalPixels;            // G 通道从 totalPixels 开始
 	int bOffset_obr = totalPixels * 2;        // B 通道从 2 * totalPixels 开始 
+	
+	int total_fbuffer_Pixels = (obr_rgb_b.y - obr_rgb_a.y + 1) * (obr_rgb_b.x - obr_rgb_a.x + 1);
+	int rOffset_fbuffer = 4;                      // R 通道从 4 开始
+	int gOffset_fbuffer = total_fbuffer_Pixels;   // G 通道从 total_fbuffer_Pixels 开始
+	int bOffset_fbuffer = total_fbuffer_Pixels * 2; // B 通道从 2 * total_fbuffer_Pixels 开始
 
+	// // 所有进程填充自己的 fbuffer 数据，包括进程 0
+
+	// dim3 blockDim(16, 16);
+	// dim3 gridDim((obr_rgb_b.x - obr_rgb_a.x + 1 + blockDim.x - 1) / blockDim.x, 
+	// 			(obr_rgb_b.y - obr_rgb_a.y + 1 + blockDim.y - 1) / blockDim.y);
+				
+	// Point2Di fa, fb;
+	// cudaMemcpy(&d_fbuffer[0], &obr_rgb_a.x, sizeof(float), cudaMemcpyHostToDevice);
+	// cudaMemcpy(&d_fbuffer[1], &obr_rgb_a.y, sizeof(float), cudaMemcpyHostToDevice);
+	// cudaMemcpy(&d_fbuffer[2], &obr_rgb_b.x, sizeof(float), cudaMemcpyHostToDevice);
+	// cudaMemcpy(&d_fbuffer[3], &obr_rgb_b.y, sizeof(float), cudaMemcpyHostToDevice);
+	// fa.x = obr_rgb_a.x; fa.y = obr_rgb_a.y; 
+	// fb.x = obr_rgb_b.x; fb.y = obr_rgb_b.y;
+	// gather_fillRGBBuffer<<<gridDim, blockDim>>>(d_obr_rgb, d_fbuffer, obr_x, obr_y, 
+	// 			rOffset_obr, gOffset_obr, bOffset_obr,
+	// 			rOffset_fbuffer, gOffset_fbuffer, bOffset_fbuffer, fa, fb);
+	// cudaDeviceSynchronize();
+	// getLastCudaError("gather_fillRGBBuffer failed");
+	
+	fbuffer[0] = (float)obr_rgb_a.x; 
+	fbuffer[1] = (float)obr_rgb_a.y; 
+	fbuffer[2] = (float)obr_rgb_b.x; 
+	fbuffer[3] = (float)obr_rgb_b.y;
+	std::cout << "[GATHER]:: PID " << Processor_ID << " fbuffer " << fbuffer[0] << " " << fbuffer[1] << " " << fbuffer[2] << " " << fbuffer[3] << std::endl;
+
+	int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
+	for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) 
+	{
+		for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) 
+		{
+			int pixelIndex = (j * obr_x + i) * 1;
+
+			// 从 color 数组中读取 RGB 分量
+			float r_float = obr_rgb[rOffset_obr + pixelIndex];
+			float g_float = obr_rgb[gOffset_obr + pixelIndex];
+			float b_float = obr_rgb[bOffset_obr + pixelIndex];
+
+			// 将RGB分量存储到 fbuffer 中
+			fbuffer[index++] = r_float;
+			fbuffer[index++] = g_float;
+			fbuffer[index++] = b_float;
+		}
+	}
+
+	MPI_Barrier(MPI_COMM_WORLD);
+	before_gather_e = MPI_Wtime();
+	before_gather_total = 0.0f;
+	before_gather_total = (before_gather_e - before_gather_s) * 1000.0f;
+	if (Processor_ID == 0)
+	{
+		std::cout << "before gather Time: " << before_gather_total << std::endl;
+	}
+
+	// 使用 MPI_Gatherv 收集每个进程的数据到进程 0
+	MPI_Gatherv(fbuffer, bufsize, MPI_FLOAT, recvbuf, recvcounts, displs, MPI_FLOAT, 0, MPI_COMM_WORLD);
+	float* d_sub_buffer = nullptr;
 	if (Processor_ID == 0)
 	{
 		for (u = 1; u < this->Processor_Size; u++)
 		{
-			
-			MPI_Recv(&fbuffer[0], bufsize, MPI_FLOAT, MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &Processor_status);
+			// int recv_index = displs[u];
+			// Point2Di fa, fb;
+			// cudaMemcpy(&fa.x, &d_recvbuf[recv_index + 0], sizeof(float), cudaMemcpyDeviceToHost);
+    		// cudaMemcpy(&fa.y, &d_recvbuf[recv_index + 1], sizeof(float), cudaMemcpyDeviceToHost);
+    		// cudaMemcpy(&fb.x, &d_recvbuf[recv_index + 2], sizeof(float), cudaMemcpyDeviceToHost);
+    		// cudaMemcpy(&fb.y, &d_recvbuf[recv_index + 3], sizeof(float), cudaMemcpyDeviceToHost);
+			// cudaMalloc(&d_sub_buffer, bufsize * sizeof(float));
+			// cudaMemcpy(d_sub_buffer, &d_recvbuf[recv_index + 4], bufsize * sizeof(float), cudaMemcpyDeviceToDevice);
+			// std::cout << "fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
+			// blockDim = dim3(16, 16);
+			// gridDim = dim3((fb.x - fa.x + 1 + blockDim.x - 1) / blockDim.x, 
+			// 			(fb.y - fa.y + 1 + blockDim.y - 1) / blockDim.y);
+			// std::cout << "gridDim " << gridDim.x << " " << gridDim.y << std::endl;
+			// std::cout << "offset " << rOffset_obr << " " << gOffset_obr << " " << bOffset_obr << std::endl;
+			// std::cout << "obr_x " << obr_x << " obr_y " << obr_y << std::endl;
+			// gather_merge<<<gridDim, blockDim>>>(d_sub_buffer, d_obr_rgb, rOffset_obr, gOffset_obr, bOffset_obr, fa, fb, obr_x);
+			// cudaDeviceSynchronize();
+			// getLastCudaError("gather_merge failed");
+
 			Point2Di fa, fb;
-			fa.x = (int)fbuffer[0]; fa.y = (int)fbuffer[1]; fb.x = (int)fbuffer[2]; fb.y = (int)fbuffer[3];
+			int recv_index = u * bufsize;
 			
+			fa.x = (int)recvbuf[recv_index + 0];
+			fa.y = (int)recvbuf[recv_index + 1];
+			fb.x = (int)recvbuf[recv_index + 2];
+			fb.y = (int)recvbuf[recv_index + 3];
+			
+			std::cout << "in loop fa " << fa.x << " " << fa.y << " fb " << fb.x << " " << fb.y << std::endl;
+
 			int index = 4;
 
 			for (int j = fa.y; j <= fb.y; j++)
@@ -1639,7 +2001,6 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 					float g = fbuffer[index++];
 					float b = fbuffer[index++];
 
-					// 将解压后的 R, G, B 数据存储到 obr_rgb 中
 					obr_rgb[rOffset_obr + pixelIndex] = r;
 					obr_rgb[gOffset_obr + pixelIndex] = g;
 					obr_rgb[bOffset_obr + pixelIndex] = b;
@@ -1649,41 +2010,12 @@ void Processor::binarySwap_RGB_GPU(float* img, int MinX, int MinY, int MaxX, int
 			rgba_totalSentBytes += bufsize * sizeof(float);
 		}
 
-		obr_a.x = 0; obr_a.y = 0;
-		obr_b.x = obr_x ; obr_b.y = obr_y;
 	}
-	else
-	{
-		
-		// 所有进程填充自己的 fbuffer 数据，包括进程 0
-		fbuffer[0] = obr_rgb_a.x; 
-		fbuffer[1] = obr_rgb_a.y; 
-		fbuffer[2] = obr_rgb_b.x; 
-		fbuffer[3] = obr_rgb_b.y;
+#endif
 
-		int index = 4; // 假设 fbuffer 的前4个字节是一些元数据
-		for (int j = obr_rgb_a.y; j <= obr_rgb_b.y; j++) 
-		{
-			for (int i = obr_rgb_a.x; i <= obr_rgb_b.x; i++) 
-			{
-				int pixelIndex = (j * obr_x + i) * 1;
-
-				// 从 color 数组中读取 RGB 分量
-				float r_float = obr_rgb[rOffset_obr + pixelIndex];
-				float g_float = obr_rgb[gOffset_obr + pixelIndex];
-				float b_float = obr_rgb[bOffset_obr + pixelIndex];
-
-				// 将RGB分量存储到 fbuffer 中
-				fbuffer[index++] = r_float;
-				fbuffer[index++] = g_float;
-				fbuffer[index++] = b_float;
-			}
-		}
-		
-		MPI_Send(&fbuffer[0], bufsize, MPI_FLOAT, 0, this->Processor_ID, MPI_COMM_WORLD);
-	}
 	MPI_Barrier(MPI_COMM_WORLD);
 	gather_time_e = MPI_Wtime();
+	gather_time_total = 0.0f;
 	gather_time_total = (gather_time_e - gather_time_s) * 1000.0f;
 	if (Processor_ID == 0)
 	{
